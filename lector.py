@@ -82,7 +82,11 @@ def leer_archivo(nombre_archivo: str) -> Optional[Problema]:
         idx += 1
 
     # Inicializar matriz de distancias
-    p.grafo_distancias = [[0.0 for _ in range(p.num_nodos)] for _ in range(p.num_nodos)]
+    inf = float('inf')
+    p.grafo_distancias = [[inf for _ in range(p.num_nodos)] for _ in range(p.num_nodos)]
+
+    for i in range(p.num_nodos):
+        p.grafo_distancias[i][i] = 0.0
 
     # --- ENCONTRAR Y LEER CADA SECCIÓN ---
     
@@ -185,7 +189,6 @@ def leer_archivo(nombre_archivo: str) -> Optional[Problema]:
 
     return p
 
-
 def imprimir_problema(p: Problema) -> None:
     """Imprime un resumen del problema cargado."""
     print("\n============== RESUMEN DEL PROBLEMA CARGADO ===============")
@@ -209,6 +212,9 @@ def imprimir_problema(p: Problema) -> None:
     for paquete in p.paquetes:
         print(f"  Paquete {paquete.id:2d}: Origen={paquete.id_nodo_origen} -> Destino={paquete.id_nodo_destino}")
     
+    imprimir_matriz(p)
+
+def imprimir_matriz(p:Problema):
     print("\n--- MUESTRA DEL GRAFO (MATRIZ DE ADYACENCIA) ---")
     
     print("      ", end="")
@@ -229,6 +235,26 @@ def imprimir_problema(p: Problema) -> None:
     
     print("===========================================================\n")
 
+def floyd_warshall(p: Problema):
+    """
+    Calcular todos los pares de caminos mínimos.
+    """
+
+    dist = p.grafo_distancias
+    
+    # intermedio
+    for k in range(p.num_nodos):
+        # origen
+        for i in range(p.num_nodos):
+            # destino
+            for j in range(p.num_nodos):
+                
+                costo_via_k = dist[i][k] + dist[k][j]
+                
+                if dist[i][j] > costo_via_k:
+                    dist[i][j] = costo_via_k
+
+# MAIN
 
 def main():
     if len(sys.argv) != 2:
@@ -245,7 +271,11 @@ def main():
 
     print("\n¡Archivo leído y procesado con éxito!")
     imprimir_problema(problema)
+
+    floyd_warshall(problema)
+    imprimir_matriz(problema)
     print("Memoria liberada correctamente.")
+
 
 
 if __name__ == "__main__":
