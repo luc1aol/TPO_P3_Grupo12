@@ -212,11 +212,10 @@ def imprimir_problema(p: Problema) -> None:
     for paquete in p.paquetes:
         print(f"  Paquete {paquete.id:2d}: Origen={paquete.id_nodo_origen} -> Destino={paquete.id_nodo_destino}")
     
+    print("\n--- MUESTRA DEL GRAFO (MATRIZ DE ADYACENCIA) ---")
     imprimir_matriz(p)
 
-def imprimir_matriz(p:Problema):
-    print("\n--- MUESTRA DEL GRAFO (MATRIZ DE ADYACENCIA) ---")
-    
+def imprimir_matriz(p:Problema):    
     print("      ", end="")
     for j in range(min(10, p.num_nodos)):
         print(f"{j:7d} ", end="")
@@ -273,10 +272,10 @@ def main():
     imprimir_problema(problema)
 
     floyd_warshall(problema)
+    print("\n--- MUESTRA DEL GRAFO (MATRIZ DE CAMINOS MINIMOS) ---")
     imprimir_matriz(problema)
+
     print("Memoria liberada correctamente.")
-
-
 
 if __name__ == "__main__":
     main()
