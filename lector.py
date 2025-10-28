@@ -4,7 +4,9 @@ import sys
 from dataclasses import dataclass
 from typing import List, Optional
 
-
+# ===========================================================
+# CLASES
+# ===========================================================
 @dataclass
 class Nodo:
     id: int
@@ -37,7 +39,10 @@ class Problema:
         self.hubs: List[Hub] = []
         self.paquetes: List[Paquete] = []
         self.grafo_distancias: List[List[float]] = []
-
+        
+# ===========================================================
+# LECTURA
+# ===========================================================
 
 def eliminar_comentario(linea: str) -> str:
     """Elimina comentarios de una línea."""
@@ -234,6 +239,10 @@ def imprimir_matriz(p:Problema):
     
     print("===========================================================\n")
 
+# ===========================================================
+# RESOLUCION
+# ===========================================================
+
 def floyd_warshall(p: Problema):
     """
     Calcular todos los pares de caminos mínimos.
@@ -253,7 +262,9 @@ def floyd_warshall(p: Problema):
                 if dist[i][j] > costo_via_k:
                     dist[i][j] = costo_via_k
 
+# ===========================================================
 # MAIN
+# ===========================================================
 
 def main():
     if len(sys.argv) != 2:
@@ -272,7 +283,7 @@ def main():
     imprimir_problema(problema)
 
     floyd_warshall(problema)
-    print("\n--- MUESTRA DEL GRAFO (MATRIZ DE CAMINOS MINIMOS) ---")
+    print("--- MUESTRA DEL GRAFO (MATRIZ DE CAMINOS MINIMOS) ---")
     imprimir_matriz(problema)
 
     print("Memoria liberada correctamente.")
