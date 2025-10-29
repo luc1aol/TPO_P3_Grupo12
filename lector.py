@@ -3,6 +3,8 @@
 import sys
 from dataclasses import dataclass
 from typing import List, Optional
+import time
+from collections import Counter
 
 # ===========================================================
 # CLASES
@@ -194,6 +196,55 @@ def leer_archivo(nombre_archivo: str) -> Optional[Problema]:
 
     return p
 
+# ===========================================================
+# CLASES DE ESTADO PARA BACKTRACKING
+# ===========================================================
+class solucion_optima:
+    """
+    Almacena la mejor solución completa encontrada hasta ahora.
+    Esto permite la poda y guardar el resultado final.
+    """
+    def __init__(self):
+        self.costo_total = float('inf')
+        self.distancia_recorrida = float('inf')
+        self.costo_hubs = 0.0
+        self.hubs_activos = set()
+        self.ruta = []
+
+    def actualizar(self, estado_final, costo_retorno_deposito, dist_retorno_deposito, id_deposito):
+        """Actualiza esta solución si la nueva es mejor."""
+        
+        costo_final = estado_final.costo_total_actual + costo_retorno_deposito
+        
+        if costo_final < self.costo_total:
+            self.costo_total = costo_final
+            self.distancia_recorrida = estado_final.distancia_recorrida_actual + dist_retorno_deposito
+            self.costo_hubs = estado_final.costo_hubs_actual
+            self.hubs_activos = set(estado_final.hubs_activos) # Copiar
+            self.ruta = list(estado_final.ruta_actual) + [id_deposito] # Copiar y añadir retorno
+            
+            # print(f"  -> Nueva mejor solución: Costo {self.costo_total:.2f}") # Descomentar para debug
+
+class estado:
+    """
+    Representa el estado actual del problema en la recursión (el "explorador").
+    """
+    def __init__(self, capacidad_max: int, id_deposito: int, paquetes_counter: Counter):
+        self.nodo_actual = id_deposito
+        self.carga_actual = capacidad_max
+        self.capacidad_max = capacidad_max
+        
+        # Un diccionario {id_destino: cantidad_paquetes}
+        # Esto maneja el caso de "16 paquetes al nodo 10" [cite: 83]
+        self.paquetes_pendientes = paquetes_counter
+        
+        self.costo_total_actual = 0.0
+        self.distancia_recorrida_actual = 0.0
+        self.costo_hubs_actual = 0.0 
+        self.hubs_activos = set()  
+        
+        self.ruta_actual = [id_deposito]  # Ruta seguida hasta ahora
+
 def imprimir_problema(p: Problema) -> None:
     """Imprime un resumen del problema cargado."""
     print("\n============== RESUMEN DEL PROBLEMA CARGADO ===============")
@@ -263,6 +314,153 @@ def floyd_warshall(p: Problema):
                     dist[i][j] = costo_via_k
 
 # ===========================================================
+# BACKTRACKING
+# ===========================================================
+
+def buscar_solucion_recursiva(
+    estado_actual: estado,
+    mejor_solucion: solucion_optima,
+    matriz_dist,      # Matriz de Floyd-Warshall
+    hubs_info: dict,   # Dict {id_hub: costo activacion}
+    id_deposito: int
+):
+    """
+    Función recursiva principal de backtracking (Aplicar/Explorar/Deshacer).
+    """
+
+    # --- 1. CASOS BASE ---
+
+    # A. Poda (Fracaso): Si ya vamos peor que la mejor solución, no seguir.
+    if estado_actual.costo_total_actual >= mejor_solucion.costo_total:
+        return # Podar esta rama
+
+    # B. Éxito (Solución Completa): ¡Entregamos todo!
+    if not estado_actual.paquetes_pendientes:
+        dist_retorno = matriz_dist[estado_actual.nodo_actual][id_deposito]
+        
+        # Actualizar la mejor solución si esta es mejor
+        mejor_solucion.actualizar(estado_actual, dist_retorno, dist_retorno, id_deposito)
+        return # Terminamos esta rama
+
+    # --- 2. PASO RECURSIVO: Iterar sobre todas las opciones ---
+
+    nodo_previo = estado_actual.nodo_actual
+
+    # --- Opción A: ENTREGAR un paquete ---
+    if estado_actual.carga_actual > 0:
+        # Iteramos sobre una COPIA de los destinos pendientes
+        for nodo_destino in list(estado_actual.paquetes_pendientes.keys()):
+            
+            dist_viaje = matriz_dist[nodo_previo][nodo_destino]
+            
+            # --- 1. APLICAR MOVIMIENTO (ENTREGAR) ---
+            estado_actual.distancia_recorrida_actual += dist_viaje
+            estado_actual.costo_total_actual += dist_viaje
+            estado_actual.nodo_actual = nodo_destino
+            estado_actual.carga_actual -= 1
+            estado_actual.paquetes_pendientes[nodo_destino] -= 1
+            
+            destino_completado = (estado_actual.paquetes_pendientes[nodo_destino] == 0)
+            if destino_completado:
+                del estado_actual.paquetes_pendientes[nodo_destino]
+                
+            estado_actual.ruta_actual.append(nodo_destino)
+
+            # --- 2. EXPLORAR ---
+            buscar_solucion_recursiva(
+                estado_actual, mejor_solucion, matriz_dist, hubs_info, id_deposito
+            )
+
+            # --- 3. DESHACER MOVIMIENTO (ENTREGAR) ---
+            estado_actual.ruta_actual.pop()
+            
+            if destino_completado:
+                estado_actual.paquetes_pendientes[nodo_destino] = 1
+            else:
+                estado_actual.paquetes_pendientes[nodo_destino] += 1
+                
+            estado_actual.carga_actual += 1
+            estado_actual.nodo_actual = nodo_previo
+            estado_actual.costo_total_actual -= dist_viaje
+            estado_actual.distancia_recorrida_actual -= dist_viaje
+
+
+    # --- Opción B: IR A RECARGAR (Opción B del TPO)
+    if estado_actual.carga_actual < estado_actual.capacidad_max:
+        # Los puntos de recarga son el Depósito + TODOS los hubs
+        puntos_recarga_posibles = [id_deposito] + list(hubs_info.keys())
+        
+        for nodo_recarga in puntos_recarga_posibles:
+            if nodo_recarga == nodo_previo:
+                continue # No tiene sentido recargar donde ya estamos
+
+            dist_viaje = matriz_dist[nodo_previo][nodo_recarga]
+            
+            # Guardar estado para deshacer
+            carga_antes_recarga = estado_actual.carga_actual
+            costo_hub_anadido = 0.0
+            
+            # --- 1. APLICAR MOVIMIENTO (RECARGAR) ---
+            estado_actual.distancia_recorrida_actual += dist_viaje
+            estado_actual.costo_total_actual += dist_viaje
+            estado_actual.nodo_actual = nodo_recarga
+            estado_actual.carga_actual = estado_actual.capacidad_max # Se llena
+            estado_actual.ruta_actual.append(nodo_recarga)
+
+            # Lógica de activación de Hub
+            es_hub = nodo_recarga in hubs_info
+            if es_hub and nodo_recarga not in estado_actual.hubs_activos:
+                costo_hub_anadido = hubs_info[nodo_recarga]
+                estado_actual.costo_hubs_actual += costo_hub_anadido
+                estado_actual.costo_total_actual += costo_hub_anadido
+                estado_actual.hubs_activos.add(nodo_recarga)
+
+            # --- 2. EXPLORAR ---
+            buscar_solucion_recursiva(
+                estado_actual, mejor_solucion, matriz_dist, hubs_info, id_deposito
+            )
+
+            # --- 3. DESHACER MOVIMIENTO (RECARGAR) ---
+            if costo_hub_anadido > 0: # Revertir activación
+                estado_actual.hubs_activos.remove(nodo_recarga)
+                estado_actual.costo_total_actual -= costo_hub_anadido
+                estado_actual.costo_hubs_actual -= costo_hub_anadido
+            
+            estado_actual.ruta_actual.pop()
+            estado_actual.carga_actual = carga_antes_recarga # Restaurar carga previa
+            estado_actual.nodo_actual = nodo_previo
+            estado_actual.costo_total_actual -= dist_viaje
+            estado_actual.distancia_recorrida_actual -= dist_viaje
+
+def escribir_solucion_txt(nombre_archivo: str, sol: solucion_optima, tiempo_ejecucion: float):
+    """
+    Genera el archivo solucion.txt con el formato exacto requerido.
+    """
+    try:
+        with open(nombre_archivo, 'w') as f:
+            # --- HUBS ACTIVADOS --- 
+            f.write("// HUBS ACTIVADOS\n")
+            if not sol.hubs_activos:
+                f.write("Ninguno\n")
+            else:
+                for hub_id in sorted(list(sol.hubs_activos)):
+                    f.write(f"{hub_id}\n")
+            
+            # --- RUTA OPTIMA --- 
+            f.write("// RUTA OPTIMA\n")
+            f.write(" -> ".join(map(str, sol.ruta)) + "\n")
+            
+            # --- METRICAS --- 
+            f.write("// METRICAS\n")
+            f.write(f"COSTO TOTAL: {sol.costo_total:.2f}\n")
+            f.write(f"DISTANCIA_RECORRIDA: {sol.distancia_recorrida:.2f}\n")
+            f.write(f"COSTO_HUBS: {sol.costo_hubs:.2f}\n")
+            f.write(f"TIEMPO EJECUCION: {tiempo_ejecucion:.6f} segundos\n")
+            
+    except IOError as e:
+        print(f"Error al escribir el archivo de solución: {e}")
+
+# ===========================================================
 # MAIN
 # ===========================================================
 
@@ -272,8 +470,12 @@ def main():
         sys.exit(1)
 
     nombre_archivo = sys.argv[1]
-    print(f"Leyendo el archivo de problema: {nombre_archivo}")
+    print(f"Leyendo el archivo de problema: {nombre_archivo}") # Nombre del archivo de salida
 
+    nombre_archivo_salida = "solucion.txt"
+
+    # --- 1. LECTURA Y PREPROCESAMIENTO ---
+    inicio_total = time.time()
     problema = leer_archivo(nombre_archivo)
     if problema is None:
         print("\n>> Hubo un error al leer o procesar el archivo. Revisa el formato.")
@@ -286,7 +488,59 @@ def main():
     print("--- MUESTRA DEL GRAFO (MATRIZ DE CAMINOS MINIMOS) ---")
     imprimir_matriz(problema)
 
+    # --- 2. PREPARAR DATOS PARA BACKTRACKING ---
+    # "Traducir" los datos del parser a estructuras optimizadas
+    matriz_dist = problema.grafo_distancias
+    hubs_info = {h.id_nodo: h.costo_activacion for h in problema.hubs}
+    
+    # Contar cuántos paquetes van a cada destino
+    paquetes_counter = Counter(p.id_nodo_destino for p in problema.paquetes)
+    
+    id_deposito_const = problema.deposito_id
+    cap_camion_const = problema.capacidad_camion
+
+    # --- 3. INICIAR BÚSQUEDA ---
+    estado_inicial = estado(cap_camion_const, id_deposito_const, paquetes_counter)
+    mejor_solucion = solucion_optima()
+
+    print(f"Iniciando búsqueda de ruta óptima (Backtracking)...")
+    
+    inicio_backtracking = time.time()
+    
+    buscar_solucion_recursiva(
+        estado_inicial,
+        mejor_solucion,
+        matriz_dist,
+        hubs_info,
+        id_deposito_const
+    )
+    
+    fin_backtracking = time.time()
+    tiempo_ejecucion_algoritmo = fin_backtracking - inicio_backtracking
+    
+    print("Búsqueda finalizada.")
+
+    # --- 4. MOSTRAR Y ESCRIBIR RESULTADOS ---
+    if mejor_solucion.costo_total == float('inf'):
+        print("\n>> NO SE ENCONTRÓ NINGUNA SOLUCIÓN VÁLIDA <<")
+    else:
+        print(f"\n============== SOLUCIÓN ÓPTIMA ENCONTRADA ===============")
+        print(f"  COSTO TOTAL:\t\t{mejor_solucion.costo_total:.2f}")
+        print(f"  Distancia Recorrida:\t{mejor_solucion.distancia_recorrida:.2f}")
+        print(f"  Costo de Hubs:\t{mejor_solucion.costo_hubs:.2f}")
+        print(f"  Hubs Activados:\t{mejor_solucion.hubs_activos or 'Ninguno'}")
+        print(f"  Tiempo del Algoritmo:\t{tiempo_ejecucion_algoritmo:.6f} seg")
+        print(f"  Ruta (primeros 20 nodos):\n  {' -> '.join(map(str, mejor_solucion.ruta[:20]))}...")
+        
+        # Escribir el archivo de salida oficial
+        escribir_solucion_txt(nombre_archivo_salida, mejor_solucion, tiempo_ejecucion_algoritmo)
+        print(f"\nArchivo '{nombre_archivo_salida}' generado con éxito.")
+    
+    fin_total = time.time()
+    print(f"Tiempo total del programa: {(fin_total - inicio_total):.6f} seg")
+
     print("Memoria liberada correctamente.")
 
 if __name__ == "__main__":
     main()
+
