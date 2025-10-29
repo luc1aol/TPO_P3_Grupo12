@@ -2,6 +2,7 @@
 
 import sys
 from dataclasses import dataclass
+import time
 from typing import List, Optional
 
 # ===========================================================
@@ -26,7 +27,6 @@ class Paquete:
     id_nodo_origen: int
     id_nodo_destino: int
 
-
 class Problema:
     def __init__(self):
         self.num_nodos: int = 0
@@ -49,7 +49,6 @@ def eliminar_comentario(linea: str) -> str:
     if "//" in linea:
         return linea[:linea.index("//")].strip()
     return linea.strip()
-
 
 def leer_archivo(nombre_archivo: str) -> Optional[Problema]:
     """Lee un archivo de problema y retorna un objeto Problema."""
@@ -262,6 +261,39 @@ def floyd_warshall(p: Problema):
                 if dist[i][j] > costo_via_k:
                     dist[i][j] = costo_via_k
 
+class Camion:
+    def __init__(self, p: Problema):
+        self.problema: Problema = p
+        self.nodo_actual = 0
+        self.costo_total_actual = 0.0
+        self.paquetes_pendientes = p.paquetes.copy()
+
+class Solucion:
+    """La mejor solución completa encontrada hasta ahora."""
+    def __init__(self):
+        self.ruta: List[int] = []
+        self.hubs_activos: set[int] = set()
+        self.costo_total: float = 0.0
+        self.costo_hubs: float = 0.0
+
+def resolver_backtracking(camion: Camion, solucion: Solucion):
+    """
+    Función recursiva de backtracking (Opción B: Ruteo Simple).
+    """
+
+    # --- Casos base ---
+    # Poda
+    if camion.costo_total_actual >= solucion.costo_total:
+        return
+    
+    # Exito
+    if len(camion.paquetes_pendientes) == 0:
+        dist_retorno = camion.problema.grafo_distancias[camion.nodo_actual][0]
+        costo_final = dist_retorno + camion.costo_total_actual
+        if costo_final < solucion.costo_total:
+            solucion.costo_total = costo_final
+
+
 # ===========================================================
 # MAIN
 # ===========================================================
@@ -286,7 +318,23 @@ def main():
     print("--- MUESTRA DEL GRAFO (MATRIZ DE CAMINOS MINIMOS) ---")
     imprimir_matriz(problema)
 
-    print("Memoria liberada correctamente.")
+    mejor_solucion = Solucion()
+    
+    # Objeto para el estado inicial
+    # El constructor de Camion AHORA hace el trabajo
+    # de crear el diccionario de hubs.
+    estado_inicial = Camion(problema)
+
+    print("Iniciando backtracking...")
+    start_time = time.time()
+
+    # 4. Ejecutar el backtracking
+    resolver_backtracking(estado_inicial, mejor_solucion)
+
+    print(start_time)
+    print(mejor_solucion.ruta)
+    print(mejor_solucion.costo_total)
+    print(mejor_solucion.distancia_recorrida)
 
 if __name__ == "__main__":
     main()
