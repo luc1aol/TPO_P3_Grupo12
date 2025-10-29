@@ -224,7 +224,6 @@ class solucion_optima:
             self.ruta = list(estado_final.ruta_actual) + [id_deposito] # Copiar y añadir retorno
             
             # print(f"  -> Nueva mejor solución: Costo {self.costo_total:.2f}") # Descomentar para debug
-
 class estado:
     """
     Representa el estado actual del problema en la recursión (el "explorador").
@@ -235,15 +234,14 @@ class estado:
         self.capacidad_max = capacidad_max
         
         # Un diccionario {id_destino: cantidad_paquetes}
-        # Esto maneja el caso de "16 paquetes al nodo 10" [cite: 83]
         self.paquetes_pendientes = paquetes_counter
         
         self.costo_total_actual = 0.0
         self.distancia_recorrida_actual = 0.0
-        self.costo_hubs_actual = 0.0 
-        self.hubs_activos = set()  
+        self.costo_hubs_actual = 0.0
+        self.hubs_activos = set()
         
-        self.ruta_actual = [id_deposito]  # Ruta seguida hasta ahora
+        self.ruta_actual = [id_deposito]
 
 def imprimir_problema(p: Problema) -> None:
     """Imprime un resumen del problema cargado."""
@@ -317,119 +315,136 @@ def floyd_warshall(p: Problema):
 # BACKTRACKING
 # ===========================================================
 
+from functools import lru_cache
+
 def buscar_solucion_recursiva(
     estado_actual: estado,
     mejor_solucion: solucion_optima,
-    matriz_dist,      # Matriz de Floyd-Warshall
-    hubs_info: dict,   # Dict {id_hub: costo activacion}
-    id_deposito: int
+    matriz_dist,
+    hubs_info: dict,
+    id_deposito: int,
+    cache=None
 ):
     """
-    Función recursiva principal de backtracking (Aplicar/Explorar/Deshacer).
+    Versión optimizada del backtracking (Opción B del TPO).
+    Usa heurísticas, memorización y recarga selectiva.
     """
+    if cache is None:
+        cache = {}
 
-    # --- 1. CASOS BASE ---
+    # --- Generar una clave de estado para la memorización ---
+    clave = (
+        estado_actual.nodo_actual,
+        estado_actual.carga_actual,
+        tuple(sorted(estado_actual.paquetes_pendientes.items())),
+        tuple(sorted(estado_actual.hubs_activos))
+    )
 
-    # A. Poda (Fracaso): Si ya vamos peor que la mejor solución, no seguir.
-    if estado_actual.costo_total_actual >= mejor_solucion.costo_total:
-        return # Podar esta rama
+    # Si ya se visitó este estado con un costo menor o igual → poda
+    if clave in cache and cache[clave] <= estado_actual.costo_total_actual:
+        return
+    cache[clave] = estado_actual.costo_total_actual
 
-    # B. Éxito (Solución Completa): ¡Entregamos todo!
+    # --- Heurística más informada ---
+    if estado_actual.paquetes_pendientes:
+        # h(s): promedio de distancias a los destinos pendientes + costo de volver al depósito
+        dist_restantes = [
+            matriz_dist[estado_actual.nodo_actual][dest] for dest in estado_actual.paquetes_pendientes.keys()
+        ]
+        h = (sum(dist_restantes) / len(dist_restantes)) + matriz_dist[estado_actual.nodo_actual][id_deposito]
+    else:
+        h = matriz_dist[estado_actual.nodo_actual][id_deposito]
+
+    if estado_actual.costo_total_actual + h >= mejor_solucion.costo_total:
+        return  # poda por cota inferior
+
+    # --- CASO BASE: Todos los paquetes entregados ---
     if not estado_actual.paquetes_pendientes:
         dist_retorno = matriz_dist[estado_actual.nodo_actual][id_deposito]
-        
-        # Actualizar la mejor solución si esta es mejor
         mejor_solucion.actualizar(estado_actual, dist_retorno, dist_retorno, id_deposito)
-        return # Terminamos esta rama
-
-    # --- 2. PASO RECURSIVO: Iterar sobre todas las opciones ---
+        return
 
     nodo_previo = estado_actual.nodo_actual
 
-    # --- Opción A: ENTREGAR un paquete ---
+    # --- Opción A: ENTREGAR si tengo carga ---
     if estado_actual.carga_actual > 0:
-        # Iteramos sobre una COPIA de los destinos pendientes
-        for nodo_destino in list(estado_actual.paquetes_pendientes.keys()):
-            
+        destinos_ordenados = sorted(
+            estado_actual.paquetes_pendientes.keys(),
+            key=lambda d: matriz_dist[nodo_previo][d]
+        )
+
+        for nodo_destino in destinos_ordenados:
             dist_viaje = matriz_dist[nodo_previo][nodo_destino]
-            
-            # --- 1. APLICAR MOVIMIENTO (ENTREGAR) ---
+            nuevo_costo = estado_actual.costo_total_actual + dist_viaje
+            if nuevo_costo >= mejor_solucion.costo_total:
+                continue  # poda temprana
+
+            # Aplicar entrega
             estado_actual.distancia_recorrida_actual += dist_viaje
-            estado_actual.costo_total_actual += dist_viaje
+            estado_actual.costo_total_actual = nuevo_costo
             estado_actual.nodo_actual = nodo_destino
             estado_actual.carga_actual -= 1
             estado_actual.paquetes_pendientes[nodo_destino] -= 1
-            
-            destino_completado = (estado_actual.paquetes_pendientes[nodo_destino] == 0)
-            if destino_completado:
+
+            completado = estado_actual.paquetes_pendientes[nodo_destino] == 0
+            if completado:
                 del estado_actual.paquetes_pendientes[nodo_destino]
-                
+
             estado_actual.ruta_actual.append(nodo_destino)
+            buscar_solucion_recursiva(estado_actual, mejor_solucion, matriz_dist, hubs_info, id_deposito, cache)
 
-            # --- 2. EXPLORAR ---
-            buscar_solucion_recursiva(
-                estado_actual, mejor_solucion, matriz_dist, hubs_info, id_deposito
-            )
-
-            # --- 3. DESHACER MOVIMIENTO (ENTREGAR) ---
+            # Deshacer
             estado_actual.ruta_actual.pop()
-            
-            if destino_completado:
+            if completado:
                 estado_actual.paquetes_pendientes[nodo_destino] = 1
             else:
                 estado_actual.paquetes_pendientes[nodo_destino] += 1
-                
             estado_actual.carga_actual += 1
             estado_actual.nodo_actual = nodo_previo
             estado_actual.costo_total_actual -= dist_viaje
             estado_actual.distancia_recorrida_actual -= dist_viaje
 
+    # --- Opción B: RECARGAR si está vacío ---
+    else:
+        puntos_recarga = [id_deposito] + list(hubs_info.keys())
 
-    # --- Opción B: IR A RECARGAR (Opción B del TPO)
-    if estado_actual.carga_actual < estado_actual.capacidad_max:
-        # Los puntos de recarga son el Depósito + TODOS los hubs
-        puntos_recarga_posibles = [id_deposito] + list(hubs_info.keys())
-        
-        for nodo_recarga in puntos_recarga_posibles:
+        for nodo_recarga in puntos_recarga:
             if nodo_recarga == nodo_previo:
-                continue # No tiene sentido recargar donde ya estamos
+                continue
 
             dist_viaje = matriz_dist[nodo_previo][nodo_recarga]
-            
-            # Guardar estado para deshacer
-            carga_antes_recarga = estado_actual.carga_actual
-            costo_hub_anadido = 0.0
-            
-            # --- 1. APLICAR MOVIMIENTO (RECARGAR) ---
+            costo_hub = 0.0
+            es_hub = nodo_recarga in hubs_info
+
+            if es_hub and nodo_recarga not in estado_actual.hubs_activos:
+                costo_hub = hubs_info[nodo_recarga]
+
+            nuevo_costo = estado_actual.costo_total_actual + dist_viaje + costo_hub
+            if nuevo_costo >= mejor_solucion.costo_total:
+                continue  # poda
+
+            # Aplicar recarga
             estado_actual.distancia_recorrida_actual += dist_viaje
-            estado_actual.costo_total_actual += dist_viaje
+            estado_actual.costo_total_actual = nuevo_costo
             estado_actual.nodo_actual = nodo_recarga
-            estado_actual.carga_actual = estado_actual.capacidad_max # Se llena
+            estado_actual.carga_actual = estado_actual.capacidad_max
             estado_actual.ruta_actual.append(nodo_recarga)
 
-            # Lógica de activación de Hub
-            es_hub = nodo_recarga in hubs_info
-            if es_hub and nodo_recarga not in estado_actual.hubs_activos:
-                costo_hub_anadido = hubs_info[nodo_recarga]
-                estado_actual.costo_hubs_actual += costo_hub_anadido
-                estado_actual.costo_total_actual += costo_hub_anadido
+            if costo_hub > 0:
+                estado_actual.costo_hubs_actual += costo_hub
                 estado_actual.hubs_activos.add(nodo_recarga)
 
-            # --- 2. EXPLORAR ---
-            buscar_solucion_recursiva(
-                estado_actual, mejor_solucion, matriz_dist, hubs_info, id_deposito
-            )
+            buscar_solucion_recursiva(estado_actual, mejor_solucion, matriz_dist, hubs_info, id_deposito, cache)
 
-            # --- 3. DESHACER MOVIMIENTO (RECARGAR) ---
-            if costo_hub_anadido > 0: # Revertir activación
+            # Deshacer
+            if costo_hub > 0:
                 estado_actual.hubs_activos.remove(nodo_recarga)
-                estado_actual.costo_total_actual -= costo_hub_anadido
-                estado_actual.costo_hubs_actual -= costo_hub_anadido
-            
+                estado_actual.costo_hubs_actual -= costo_hub
+
             estado_actual.ruta_actual.pop()
-            estado_actual.carga_actual = carga_antes_recarga # Restaurar carga previa
+            estado_actual.carga_actual = 0
             estado_actual.nodo_actual = nodo_previo
-            estado_actual.costo_total_actual -= dist_viaje
+            estado_actual.costo_total_actual -= (dist_viaje + costo_hub)
             estado_actual.distancia_recorrida_actual -= dist_viaje
 
 def escribir_solucion_txt(nombre_archivo: str, sol: solucion_optima, tiempo_ejecucion: float):
