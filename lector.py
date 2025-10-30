@@ -263,20 +263,31 @@ def floyd_warshall(p: Problema):
 
 class Camion:
     def __init__(self, p: Problema):
-        self.problema: Problema = p
-        self.nodo_actual = 0
-        self.costo_total_actual = 0.0
-        self.paquetes_pendientes = p.paquetes.copy()
+        # inicia en el deposito
+        self.ruta_actual: List[int] = [p.deposito_id] 
+        self.nodo_actual = p.deposito_id
 
+        # comienza lleno
+        self.capacidad_maxima = p.capacidad_camion
+        self.carga_actual = p.capacidad_camion
+
+        self.costo_total_actual = 0.0
+        self.distancia_recorrida_actual = 0.0
+        self.paquetes_pendientes_actual = p.paquetes.copy()
+        self.hubs_activados_actual: List[int] = []
+        self.dict_hubs = {hub.id_nodo: hub.costo_activacion for hub in p.hubs}
+        self.costo_hubs_actual: float = 0.0
 class Solucion:
     """La mejor solución completa encontrada hasta ahora."""
     def __init__(self):
         self.ruta: List[int] = []
-        self.hubs_activos: set[int] = set()
-        self.costo_total: float = 0.0
+        self.costo_total: float = float("inf")
+        self.distancia_recorrida = 0.0
+        self.paquetes_pendientes: List[Paquete] = []
         self.costo_hubs: float = 0.0
+        self.hubs_activados: List[int] = []
 
-def resolver_backtracking(camion: Camion, solucion: Solucion):
+def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema):
     """
     Función recursiva de backtracking (Opción B: Ruteo Simple).
     """
@@ -287,12 +298,89 @@ def resolver_backtracking(camion: Camion, solucion: Solucion):
         return
     
     # Exito
-    if len(camion.paquetes_pendientes) == 0:
-        dist_retorno = camion.problema.grafo_distancias[camion.nodo_actual][0]
+    if len(camion.paquetes_pendientes_actual) == 0:
+        dist_retorno = problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
         costo_final = dist_retorno + camion.costo_total_actual
         if costo_final < solucion.costo_total:
+            # actualizar solucion
             solucion.costo_total = costo_final
+            solucion.ruta = camion.ruta_actual.copy() + [problema.deposito_id]
+            solucion.distancia_recorrida = camion.distancia_recorrida_actual + dist_retorno
+            solucion.costo_hubs = camion.costo_hubs_actual
+            solucion.hubs_activados = camion.hubs_activados_actual.copy()
+            solucion.paquetes_pendientes = []
+        return
+    
+    # Entregar
+    if camion.carga_actual > 0:
+        # Añadir paquetes pendientes a opciones
+        # Opciones
+        opciones = camion.paquetes_pendientes_actual
 
+        for nodo_destino_entrega in opciones.copy():
+            # Aplicar
+            nodo_anterior = camion.nodo_actual
+            dist_viaje = problema.grafo_distancias[camion.nodo_actual][nodo_destino_entrega.id_nodo_destino]
+            camion.distancia_recorrida_actual += dist_viaje
+            camion.costo_total_actual += dist_viaje
+            camion.nodo_actual = nodo_destino_entrega.id_nodo_destino
+            camion.carga_actual -= 1
+            camion.paquetes_pendientes_actual.remove(nodo_destino_entrega)
+            camion.ruta_actual.append(nodo_destino_entrega.id_nodo_destino)
+
+            resolver_backtracking(camion, solucion, problema) # Llamada recursiva con el nuevo estado del camion
+
+            # Deshacer
+            camion.ruta_actual.pop()
+            camion.paquetes_pendientes_actual.append(nodo_destino_entrega)
+            camion.carga_actual += 1
+            camion.nodo_actual = nodo_anterior
+            camion.costo_total_actual -= dist_viaje
+            camion.distancia_recorrida_actual -= dist_viaje
+    
+    # Recargar
+    if camion.carga_actual < camion.capacidad_maxima:
+        # Opciones
+        opciones = [0] # 0 = deposito central
+        # Añadir hubs a opciones
+        for i in problema.hubs:
+            opciones.append(i.id_nodo)
+
+        for nodo_destino_recarga in opciones:
+            if camion.nodo_actual != nodo_destino_recarga:
+                # Aplicar
+                activacion_de_hub = False
+                carga_anterior = camion.carga_actual
+                nodo_anterior = camion.nodo_actual
+                dist_viaje = problema.grafo_distancias[camion.nodo_actual][nodo_destino_recarga]
+
+                camion.distancia_recorrida_actual += dist_viaje
+                camion.costo_total_actual += dist_viaje
+                camion.nodo_actual = nodo_destino_recarga
+                camion.carga_actual = camion.capacidad_maxima
+                camion.ruta_actual.append(nodo_destino_recarga)
+
+                # Si es un hub
+                if nodo_destino_recarga in camion.dict_hubs.keys() and nodo_destino_recarga not in camion.hubs_activados_actual:
+                    activacion_de_hub = True
+                    costo_activacion = camion.dict_hubs.get(nodo_destino_recarga)
+
+                    camion.costo_hubs_actual += costo_activacion
+                    camion.costo_total_actual += costo_activacion
+                    camion.hubs_activados_actual.append(nodo_destino_recarga)
+
+                resolver_backtracking(camion, solucion, problema) # Llamada recursiva con el nuevo estado del camion
+
+                # Deshacer
+                if activacion_de_hub:
+                    camion.hubs_activados_actual.remove(nodo_destino_recarga)
+                    camion.costo_total_actual -= costo_activacion
+                    camion.costo_hubs_actual -= costo_activacion
+                camion.ruta_actual.pop()
+                camion.carga_actual = carga_anterior
+                camion.nodo_actual = nodo_anterior
+                camion.costo_total_actual -= dist_viaje
+                camion.distancia_recorrida_actual -= dist_viaje
 
 # ===========================================================
 # MAIN
@@ -314,27 +402,28 @@ def main():
     print("\n¡Archivo leído y procesado con éxito!")
     imprimir_problema(problema)
 
+    inicio = time.time()
+
+    print("Iniciando Floyd-Warshall...")
     floyd_warshall(problema)
+
     print("--- MUESTRA DEL GRAFO (MATRIZ DE CAMINOS MINIMOS) ---")
     imprimir_matriz(problema)
 
     mejor_solucion = Solucion()
-    
-    # Objeto para el estado inicial
-    # El constructor de Camion AHORA hace el trabajo
-    # de crear el diccionario de hubs.
     estado_inicial = Camion(problema)
 
     print("Iniciando backtracking...")
-    start_time = time.time()
+    resolver_backtracking(estado_inicial, mejor_solucion, problema)
+    
+    fin = time.time()
 
-    # 4. Ejecutar el backtracking
-    resolver_backtracking(estado_inicial, mejor_solucion)
+    tiempo = fin - inicio
 
-    print(start_time)
-    print(mejor_solucion.ruta)
-    print(mejor_solucion.costo_total)
-    print(mejor_solucion.distancia_recorrida)
+    print(f"Tiempo de ejecucion: {tiempo:.5f} segundos")
+    print(f"Mejor ruta: {mejor_solucion.ruta}")
+    print(f"Costo total: {mejor_solucion.costo_total:.5f}")
+    print(f"Distancia total recorrida: {mejor_solucion.distancia_recorrida:.5f}")
 
 if __name__ == "__main__":
     main()
