@@ -2,6 +2,7 @@
 
 import sys
 from dataclasses import dataclass
+import time
 from typing import List, Optional
 
 # ===========================================================
@@ -26,7 +27,6 @@ class Paquete:
     id_nodo_origen: int
     id_nodo_destino: int
 
-
 class Problema:
     def __init__(self):
         self.num_nodos: int = 0
@@ -49,7 +49,6 @@ def eliminar_comentario(linea: str) -> str:
     if "//" in linea:
         return linea[:linea.index("//")].strip()
     return linea.strip()
-
 
 def leer_archivo(nombre_archivo: str) -> Optional[Problema]:
     """Lee un archivo de problema y retorna un objeto Problema."""
@@ -262,6 +261,265 @@ def floyd_warshall(p: Problema):
                 if dist[i][j] > costo_via_k:
                     dist[i][j] = costo_via_k
 
+class Camion:
+    """
+    Estado actual del camion
+    """
+    def __init__(self, p: Problema):
+        # inicia en el deposito
+        self.ruta_actual: List[int] = [p.deposito_id] 
+        self.nodo_actual = p.deposito_id
+
+        # comienza lleno
+        self.capacidad_maxima = p.capacidad_camion
+        self.carga_actual = p.capacidad_camion
+
+        self.costo_total_actual = 0.0
+        self.distancia_recorrida_actual = 0.0
+        self.paquetes_pendientes_actual = p.paquetes.copy()
+        self.hubs_activados_actual: List[int] = []
+        self.dict_hubs = {hub.id_nodo: hub.costo_activacion for hub in p.hubs}
+        self.costo_hubs_actual: float = 0.0
+
+    def aplicar_entrega(self, nodo_destino_entrega: Paquete, problema: Problema):
+        nodo_anterior = self.nodo_actual
+        dist_viaje = problema.grafo_distancias[self.nodo_actual][nodo_destino_entrega.id_nodo_destino]
+        self.distancia_recorrida_actual += dist_viaje
+        self.costo_total_actual += dist_viaje
+        self.nodo_actual = nodo_destino_entrega.id_nodo_destino
+        self.carga_actual -= 1
+        self.paquetes_pendientes_actual.remove(nodo_destino_entrega)
+        self.ruta_actual.append(nodo_destino_entrega.id_nodo_destino)
+        return nodo_anterior
+
+    def deshacer_entrega(self, nodo_destino_entrega: Paquete, nodo_anterior: int, dist_viaje: float):
+        self.ruta_actual.pop()
+        self.paquetes_pendientes_actual.append(nodo_destino_entrega)
+        self.carga_actual += 1
+        self.nodo_actual = nodo_anterior
+        self.costo_total_actual -= dist_viaje
+        self.distancia_recorrida_actual -= dist_viaje
+
+    def aplicar_recarga(self, problema: Problema, nodo_destino_recarga: int):
+        activacion_de_hub = False
+        carga_anterior = self.carga_actual
+        nodo_anterior = self.nodo_actual
+        dist_viaje = problema.grafo_distancias[self.nodo_actual][nodo_destino_recarga]
+
+        self.distancia_recorrida_actual += dist_viaje
+        self.costo_total_actual += dist_viaje
+        self.nodo_actual = nodo_destino_recarga
+        self.carga_actual = self.capacidad_maxima
+        self.ruta_actual.append(nodo_destino_recarga)
+
+        # Si es un hub
+        if nodo_destino_recarga in self.dict_hubs.keys() and nodo_destino_recarga not in self.hubs_activados_actual:
+            activacion_de_hub = True
+            costo_activacion = self.dict_hubs.get(nodo_destino_recarga)
+
+            self.costo_hubs_actual += costo_activacion
+            self.costo_total_actual += costo_activacion
+            self.hubs_activados_actual.append(nodo_destino_recarga)
+
+        return activacion_de_hub, carga_anterior, nodo_anterior, costo_activacion, dist_viaje
+    
+    def deshacer_recarga(self, activacion_de_hub: bool, nodo_destino_recarga: int, costo_activacion: float, carga_anterior: int, nodo_anterior: int, dist_viaje: float):
+        if activacion_de_hub:
+            self.hubs_activados_actual.remove(nodo_destino_recarga)
+            self.costo_total_actual -= costo_activacion
+            self.costo_hubs_actual -= costo_activacion
+        self.ruta_actual.pop()
+        self.carga_actual = carga_anterior
+        self.nodo_actual = nodo_anterior
+        self.costo_total_actual -= dist_viaje
+        self.distancia_recorrida_actual -= dist_viaje
+class Solucion:
+    """La mejor solución completa encontrada hasta ahora."""
+    def __init__(self):
+        self.ruta: List[int] = []
+        self.costo_total: float = float("inf")
+        self.distancia_recorrida = 0.0
+        self.paquetes_pendientes: List[Paquete] = []
+        self.costo_hubs: float = 0.0
+        self.hubs_activados: List[int] = []
+
+    def actualizar_solucion(self, camion: Camion, problema: Problema, costo_final: float, dist_retorno: float):
+        self.costo_total = costo_final
+        self.ruta = camion.ruta_actual.copy() + [problema.deposito_id]
+        self.distancia_recorrida = camion.distancia_recorrida_actual + dist_retorno
+        self.costo_hubs = camion.costo_hubs_actual
+        self.hubs_activados = camion.hubs_activados_actual.copy()
+        self.paquetes_pendientes = []
+
+def encontrar_solucion_greedy(camion: Camion, problema: Problema):
+    solucion = Solucion()
+    while len(camion.paquetes_pendientes_actual) > 0:
+        dist_minima = float("inf")
+        paquete_mas_cercano = None
+        hub_mas_cercano = None
+
+        # SI ESTA LLENO
+        if camion.carga_actual == camion.capacidad_maxima:
+            for paquete in camion.paquetes_pendientes_actual:
+                nodo_destino = paquete.id_nodo_destino
+
+                if camion.nodo_actual == nodo_destino: # no viajar al nodo actual
+                    continue
+
+                dist = problema.grafo_distancias[camion.nodo_actual][nodo_destino]
+                if dist < dist_minima:
+                    dist_minima = dist
+                    paquete_mas_cercano = paquete
+
+            if paquete_mas_cercano:
+                camion.distancia_recorrida_actual += dist_minima
+                camion.costo_total_actual += dist_minima
+                camion.nodo_actual = paquete_mas_cercano.id_nodo_destino
+                camion.ruta_actual.append(paquete_mas_cercano.id_nodo_destino)
+                camion.carga_actual -= 1
+                camion.paquetes_pendientes_actual.remove(paquete_mas_cercano)
+        
+        # SI ESTA VACIO
+        elif camion.carga_actual == 0:
+            opciones = [0] + [hub.id_nodo for hub in problema.hubs]
+
+            for hub in opciones:
+
+                if camion.nodo_actual == hub: # no viajar al nodo actual
+                    continue
+
+                dist = problema.grafo_distancias[camion.nodo_actual][hub]
+                if dist < dist_minima:
+                    dist_minima = dist
+                    hub_mas_cercano = hub
+
+            if hub_mas_cercano:
+                camion.distancia_recorrida_actual += dist_minima
+                camion.costo_total_actual += dist_minima
+                camion.nodo_actual = hub_mas_cercano
+                camion.ruta_actual.append(hub_mas_cercano)
+                camion.carga_actual = camion.capacidad_maxima
+                if hub_mas_cercano in camion.dict_hubs.keys() and hub_mas_cercano not in camion.hubs_activados_actual:
+                    costo_activacion = camion.dict_hubs.get(hub_mas_cercano)
+                    camion.costo_hubs_actual += costo_activacion
+                    camion.costo_total_actual += costo_activacion
+                    camion.hubs_activados_actual.append(hub_mas_cercano)
+
+        # SI AUN TIENE ESPACIO
+        elif camion.carga_actual > 0:
+
+            # paquete mas cercano
+            dist_minima_paquete = float("inf")
+            for paquete in camion.paquetes_pendientes_actual:
+                nodo_destino = paquete.id_nodo_destino
+
+                if camion.nodo_actual == nodo_destino: # no viajar al nodo actual
+                    continue
+
+                dist = problema.grafo_distancias[camion.nodo_actual][nodo_destino]
+                if dist < dist_minima_paquete:
+                    dist_minima_paquete = dist
+                    paquete_mas_cercano = paquete
+
+            # hub/deposito mas cercano
+            dist_minima_recarga = float("inf")
+            opciones = [0] + [hub.id_nodo for hub in problema.hubs]
+            for hub in opciones:
+
+                if camion.nodo_actual == hub: # no viajar al nodo actual
+                    continue
+
+                dist = problema.grafo_distancias[camion.nodo_actual][hub]
+                if dist < dist_minima_recarga:
+                    dist_minima_recarga = dist
+                    hub_mas_cercano = hub
+            
+            # compara paquete vs recarga
+            if dist_minima_paquete < dist_minima_recarga:
+                dist_minima = dist_minima_paquete
+
+                camion.distancia_recorrida_actual += dist_minima
+                camion.costo_total_actual += dist_minima
+                camion.nodo_actual = paquete_mas_cercano.id_nodo_destino
+                camion.ruta_actual.append(paquete_mas_cercano.id_nodo_destino)
+                camion.carga_actual -= 1
+                camion.paquetes_pendientes_actual.remove(paquete_mas_cercano)
+
+            else:
+                dist_minima = dist_minima_recarga
+
+                camion.distancia_recorrida_actual += dist_minima
+                camion.costo_total_actual += dist_minima
+                camion.nodo_actual = hub_mas_cercano
+                camion.ruta_actual.append(hub_mas_cercano)
+                camion.carga_actual = camion.capacidad_maxima
+                if hub_mas_cercano in camion.dict_hubs.keys() and hub_mas_cercano not in camion.hubs_activados_actual:
+                    costo_activacion = camion.dict_hubs.get(hub_mas_cercano)
+                    camion.costo_hubs_actual += costo_activacion
+                    camion.costo_total_actual += costo_activacion
+                    camion.hubs_activados_actual.append(hub_mas_cercano)
+
+
+    dist_retorno = problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
+    
+    solucion.costo_total = camion.costo_total_actual + dist_retorno
+    solucion.distancia_recorrida = camion.distancia_recorrida_actual + dist_retorno
+    solucion.costo_hubs = camion.costo_hubs_actual
+    solucion.hubs_activados = camion.hubs_activados_actual.copy()
+    solucion.ruta = camion.ruta_actual.copy() + [problema.deposito_id]
+    solucion.paquetes_pendientes = []
+    
+    return solucion
+
+def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema):
+    """
+    Función recursiva de backtracking (Opción B: Ruteo Simple).
+    """
+
+    # --- Casos base ---
+    # Poda
+    if camion.costo_total_actual >= solucion.costo_total:
+        return
+    
+    # Exito
+    if len(camion.paquetes_pendientes_actual) == 0:
+        dist_retorno = problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
+        costo_final = dist_retorno + camion.costo_total_actual
+        if costo_final < solucion.costo_total:
+            solucion.actualizar_solucion(camion, problema, costo_final, dist_retorno)
+        return
+    
+    # Entregar
+    if camion.carga_actual > 0:
+        # Opciones
+        opciones = camion.paquetes_pendientes_actual # Añadir paquetes pendientes a opciones
+
+        for nodo_destino_entrega in opciones.copy():
+            # Aplicar
+            nodo_anterior = camion.aplicar_entrega(nodo_destino_entrega, problema)
+
+            # Explorar
+            resolver_backtracking(camion, solucion, problema) # Con el nuevo estado del camion
+
+            # Deshacer
+            camion.deshacer_entrega(nodo_destino_entrega, nodo_anterior, dist_viaje)
+    
+    # Recargar
+    if camion.carga_actual < camion.capacidad_maxima:
+        # Opciones
+        opciones = [0] + [hub.id_nodo for hub in problema.hubs]
+
+        for nodo_destino_recarga in opciones:
+            if camion.nodo_actual != nodo_destino_recarga:
+                # Aplicar
+                activacion_de_hub, carga_anterior, nodo_anterior, costo_activacion, dist_viaje = camion.aplicar_recarga(problema, nodo_destino_recarga)
+        
+                # Explorar
+                resolver_backtracking(camion, solucion, problema) # Llamada recursiva con el nuevo estado del camion
+
+                # Deshacer
+                camion.deshacer_recarga(activacion_de_hub, nodo_destino_recarga, costo_activacion, carga_anterior, nodo_anterior, dist_viaje)
+
 # ===========================================================
 # MAIN
 # ===========================================================
@@ -282,11 +540,30 @@ def main():
     print("\n¡Archivo leído y procesado con éxito!")
     imprimir_problema(problema)
 
+    inicio = time.time()
+
+    print("Iniciando Floyd-Warshall...")
     floyd_warshall(problema)
+
     print("--- MUESTRA DEL GRAFO (MATRIZ DE CAMINOS MINIMOS) ---")
     imprimir_matriz(problema)
 
-    print("Memoria liberada correctamente.")
+    estado_inicial = Camion(problema)
+    mejor_solucion = encontrar_solucion_greedy(estado_inicial, problema)
+
+    print("Iniciando backtracking...")
+    resolver_backtracking(estado_inicial, mejor_solucion, problema)
+    
+    fin = time.time()
+
+    tiempo = fin - inicio
+
+    print(f"Tiempo de ejecucion: {tiempo:.5f} segundos")
+    print(f"Mejor ruta: {mejor_solucion.ruta}")
+    print(f"Costo total: {mejor_solucion.costo_total:.5f}")
+    print(f"Costo activacion de hubs: {mejor_solucion.costo_hubs:.5f}")
+    print(f"Distancia total recorrida: {mejor_solucion.distancia_recorrida:.5f}")
+    print(f"Hubs activados: {mejor_solucion.hubs_activados}")
 
 if __name__ == "__main__":
     main()

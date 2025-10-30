@@ -6,3 +6,7 @@ for i in range(12):
 
 for p in grafo_distancias:
     print(p)
+
+dict_hubs = {hub: hub*12 for hub in range(10)}
+
+print(dict_hubs.get(2))
