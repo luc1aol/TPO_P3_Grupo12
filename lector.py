@@ -561,6 +561,7 @@ def main():
     print(f"Tiempo de ejecucion: {tiempo:.5f} segundos")
     print(f"Mejor ruta: {mejor_solucion.ruta}")
     print(f"Costo total: {mejor_solucion.costo_total:.5f}")
+    print(f"Costo activacion de hubs: {mejor_solucion.costo_hubs:.5f}")
     print(f"Distancia total recorrida: {mejor_solucion.distancia_recorrida:.5f}")
     print(f"Hubs activados: {mejor_solucion.hubs_activados}")
 
