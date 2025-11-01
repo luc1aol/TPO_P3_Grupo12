@@ -1,0 +1,11 @@
+// --- HUBS ACTIVADOS ---
+3
+
+// --- RUTA OPTIMA ---
+0 -> 13 -> 10 -> 9 -> 15 -> 15 -> 17 -> 17 -> 18 -> 3 -> 5 -> 7 -> 0
+
+// --- METRICAS ---
+COSTO_TOTAL: 9246.91
+DISTANCIA_RECORRIDA: 9058.91
+COSTO_HUBS: 188.00
+TIEMPO_EJECUCION: 0.024953 segundos

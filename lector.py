@@ -29,6 +29,7 @@ class Paquete:
     id_nodo_origen: int
     id_nodo_destino: int
 
+@dataclass
 class Problema:
     def __init__(self):
         self.num_nodos: int = 0
@@ -388,93 +389,382 @@ class Solucion:
         """Compara esta solución con otra según el costo total."""
         return self.costo_total < otra_solucion.costo_total
     
- 
-def nearest_neighbor_greedy(problema: Problema):
+#IMPLEMENTAR BACKTRACKING PARA n<50
+
+def probar_configuracion_hubs(problema: Problema, 
+                              hubs_a_probar: Set[int], 
+                              desc: str) -> Solucion:
     """
-    Construye una ruta inicial utilizando el heurístico del vecino más cercano.
-    No considera inventario, solo distancia y capacidad.
-    Retorna una lista de nodos visitados.
+    Función helper: Genera una ruta greedy para un set de hubs 
+    y la optimiza con 2-Opt.
+    Esta función es usada tanto por el solver heurístico como por el exhaustivo.
     """
-    # Inicialización del camión y paquetes pendientes
-    camion = Camion(
-        capacidad_maxima=problema.capacidad_camion,
-        deposito_id=problema.deposito_id,
-        dict_hubs={hub.id_nodo: hub.costo_activacion for hub in problema.hubs}
-    )
-    camion.paquetes_pendientes = problema.paquetes.copy() # Asignar todos los paquetes al camión
-
-    # Mientras haya paquetes pendientes, buscar el siguiente movimiento óptimo
-    while camion.paquetes_pendientes:
-        if camion.necesita_recargar():
-            # buscar el hub o depósito más cercano
-            destinos = [problema.deposito_id] + [hub.id_nodo for hub in problema.hubs]
-        else:
-            # buscar destino de paquete más cercano
-            destinos = [p.id_nodo_destino for p in camion.paquetes_pendientes]
-
-        mejor_nodo = None
-        mejor_dist = float('inf')
-        
-        # encontrar el destino más cercano
-        for destino in destinos:
-            if destino == camion.nodo_actual:
-                continue # evitar quedarse en el mismo nodo
-            dist = problema.grafo_distancias[camion.nodo_actual][destino]
-            if dist < mejor_dist: # actualizar mejor opción
-                mejor_dist = dist
-                mejor_nodo = destino
-
-        if mejor_nodo is None: # no hay más movimientos posibles
-            break
-
-        # aplicar movimiento
-        if mejor_nodo in [p.id_nodo_destino for p in camion.paquetes_pendientes]:
-            # es entrega
-            paquete = next(p for p in camion.paquetes_pendientes if p.id_nodo_destino == mejor_nodo)
-            camion.entregar_paquete(paquete, problema)
-        else:
-            # es recarga
-            camion.recargar(mejor_nodo, problema)
+    print(f"  Probando config: '{desc}' (Hubs: {hubs_a_probar or 'Ninguno'})...")
     
-    # retornar al depósito
-    camion.ruta_actual.append(problema.deposito_id)
-    return camion.ruta_actual
+    # 1. Generar ruta inicial con el Greedy (Tarea 2.2)
+    solucion_greedy = generar_ruta_greedy(problema, hubs_a_probar)
+    
+    if solucion_greedy.costo_total == float('inf'):
+        print("    -> Greedy no encontró ruta viable.")
+        return solucion_greedy # Devolver solución inválida
+        
+    print(f"    -> Costo Greedy: {solucion_greedy.costo_total:.2f}")
+    
+    # 2. Pulir ruta con 2-Opt (Tarea 1.2)
+    solucion_optimizada = dos_opt(solucion_greedy.ruta, problema)
+    print(f"    -> Costo 2-Opt: {solucion_optimizada.costo_total:.2f}")
+    
+    return solucion_optimizada
+
+
+def generar_combinaciones_hubs(hubs_disponibles: List[int]) -> List[Set[int]]:
+    """
+    Genera todas las 2^M combinaciones de hubs usando recursión (backtracking).
+    Cumple con el requisito de usar backtracking.
+    Devuelve una lista de sets, cada set es una combinación de hubs.
+    """
+    todas_las_combinaciones = []
+    
+    def backtrack_hubs(index: int, combinacion_actual: Set[int]):
+        # Caso base: hemos considerado todos los hubs
+        if index == len(hubs_disponibles):
+            todas_las_combinaciones.append(combinacion_actual.copy())
+            return
+        
+        # --- Opción 1: NO incluir el hub[index] en esta combinación ---
+        backtrack_hubs(index + 1, combinacion_actual)
+        
+        # --- Opción 2: INCLUIR el hub[index] en esta combinación ---
+        hub_id = hubs_disponibles[index]
+        combinacion_actual.add(hub_id)
+        
+        # Llamada recursiva
+        backtrack_hubs(index + 1, combinacion_actual)
+        
+        # Deshacer (backtrack) para la siguiente iteración
+        combinacion_actual.remove(hub_id) 
+    
+    backtrack_hubs(0, set())
+    return todas_las_combinaciones
+
+
+def solver_exhaustivo(problema: Problema) -> Solucion:
+    """
+    Ejecuta el solver en modo EXHAUSTIVO, probando TODAS las
+    combinaciones de hubs. Cumple el requisito de backtracking del TPO.
+    Ideal para casos pequeños (n < 50).
+    """
+    print(f"Iniciando solver exhaustivo (Backtracking de {problema.num_hubs} hubs)...")
+    
+    mejor_solucion_global = Solucion(costo_total=float('inf'))
+    
+    # 1. Obtener la lista de IDs de hubs disponibles
+    hubs_disponibles = [hub.id_nodo for hub in problema.hubs]
+    
+    # 2. Tarea 3.1: Generar todas las 2^M combinaciones
+    todas_las_combinaciones = generar_combinaciones_hubs(hubs_disponibles)
+    print(f"Se probarán {len(todas_las_combinaciones)} combinaciones de hubs.")
+
+    # 3. Iterar sobre CADA combinación (la "fuerza bruta")
+    for i, hubs_a_probar in enumerate(todas_las_combinaciones):
+        
+        # 4. Probar y pulir la ruta para esta combinación
+        desc = f"Combinación {i+1}/{len(todas_las_combinaciones)}"
+        solucion_actual = probar_configuracion_hubs(problema, hubs_a_probar, desc)
+        
+        # 5. Actualizar el "campeón"
+        if solucion_actual.costo_total < mejor_solucion_global.costo_total:
+            mejor_solucion_global = solucion_actual
+            print(f"  *** NUEVA MEJOR SOLUCIÓN GLOBAL: {mejor_solucion_global.costo_total:.2f} ***")
+
+    print(f"Solver exhaustivo finalizado. Mejor costo: {mejor_solucion_global.costo_total:.2f}")
+    return mejor_solucion_global
+
+#---------------------------------
+#HEURISTICAS PARA n>=50 
+#---------------------------------
+def seleccionar_hubs_heuristico(problema: Problema) -> Set[int]:
+    """
+    Calcula un puntaje para cada hub basado en el ahorro de distancia
+    potencial vs. su costo de activación.
+    Devuelve un set con los IDs de los hubs que vale la pena activar.
+    Esto es para no probar todas las 2^M combinaciones de hubs.
+    Puntaje = (Ahorro total de distancia) - (Costo de activación)
+    """
+    hubs_seleccionados = set()
+    puntajes_hubs = []
+    
+    # Datos que usaremos repetidamente
+    matriz_dist = problema.grafo_distancias
+    depot_id = problema.deposito_id
+    
+    # 1. Calcular el puntaje para cada hub
+    for hub in problema.hubs:
+        ahorro_total = 0.0
+        
+        # 2. Iterar sobre CADA paquete para ver cuánto ahorra este hub
+        for paquete in problema.paquetes:
+            dest_id = paquete.id_nodo_destino
+            
+            # Costo de la ruta directa desde el depósito
+            dist_directa = matriz_dist[depot_id][dest_id]
+            
+            # Costo de la ruta pasando por este hub
+            dist_deposito_a_hub = matriz_dist[depot_id][hub.id_nodo]
+            dist_hub_a_destino = matriz_dist[hub.id_nodo][dest_id]
+            
+            dist_via_hub = dist_deposito_a_hub + dist_hub_a_destino
+            
+            # Calculamos el ahorro (solo si es positivo)
+            ahorro = dist_directa - dist_via_hub
+            if ahorro > 0:
+                ahorro_total += ahorro
+        
+        # 3. Puntaje final = Ahorro total menos el costo de activarlo
+        puntaje = ahorro_total - hub.costo_activacion
+        puntajes_hubs.append((puntaje, hub.id_nodo)) # (puntaje, id)
+        
+    # 4. Ordenar los hubs por su puntaje, de mayor a menor
+    puntajes_hubs.sort(key=lambda x: x[0], reverse=True)
+    
+    # 5. Activar todos los hubs que tengan puntaje positivo
+    for puntaje, hub_id in puntajes_hubs:
+        if puntaje > 0:
+            hubs_seleccionados.add(hub_id)
+        else:
+            # Como está ordenado, si este es <= 0, los demás también
+            break 
+            
+    return hubs_seleccionados
+
+def find_nearest_reload_point(from_node: int, 
+                              active_hubs: Set[int], 
+                              problema: Problema) -> int:
+    """
+    Encuentra el punto de recarga (depósito o hub activo) más cercano
+    al 'from_node'.
+    """
+    best_point = problema.deposito_id
+    best_dist = problema.grafo_distancias[from_node][problema.deposito_id]
+    
+    for hub_id in active_hubs:
+        dist = problema.grafo_distancias[from_node][hub_id]
+        if dist < best_dist:
+            best_dist = dist
+            best_point = hub_id
+            
+    return best_point
+
+def generar_ruta_greedy(problema: Problema, active_hubs: Set[int]) -> Solucion:
+    """
+    Construye una ruta inicial viable usando una heurística greedy (vecino más cercano)
+    que fuerza las recargas cuando la capacidad llega a 0.
+    
+    (Versión CORREGIDA basada en la recomendación del análisis)
+    """
+    # 1. Configuración inicial
+    matriz_dist = problema.grafo_distancias
+    depot_id = problema.deposito_id
+    capacidad = problema.capacidad_camion
+    dict_hubs = {h.id_nodo: h.costo_activacion for h in problema.hubs}
+    
+    # Paquetes que faltan por entregar (copia de trabajo)
+    packages_remaining = {}
+    for pkg in problema.paquetes:
+        packages_remaining[pkg.id_nodo_destino] = packages_remaining.get(pkg.id_nodo_destino, 0) + 1
+
+    # Estado de la ruta
+    path = [depot_id]
+    total_distance = 0.0
+    current_node = depot_id
+    current_load = capacidad # Empezamos llenos
+    
+    hubs_activados_en_ruta = set()
+    total_hub_cost = 0.0
+
+    # 2. Bucle principal: continuar mientras queden paquetes
+    while packages_remaining:
+        
+        # 3. Lógica de decisión: ¿Recargar o Entregar?
+        
+        if current_load == 0:
+            # --- FORZAR RECARGA ---
+            # No tenemos carga, debemos ir al punto de recarga más cercano
+            
+            nearest_reload = find_nearest_reload_point(current_node, active_hubs, problema)
+            dist_viaje = matriz_dist[current_node][nearest_reload]
+            
+            if dist_viaje == float('inf'):
+                 return Solucion(costo_total=float('inf')) # Error: no puede recargar
+
+            total_distance += dist_viaje
+            current_node = nearest_reload
+            path.append(current_node)
+            current_load = capacidad # Recargado
+            
+            # Activar el hub si es nuevo
+            if current_node in dict_hubs and current_node not in hubs_activados_en_ruta:
+                hubs_activados_en_ruta.add(current_node)
+                total_hub_cost += dict_hubs[current_node]
+
+        else:
+            # --- ENTREGAR PAQUETE ---
+            # Tenemos carga, buscamos el paquete pendiente más cercano
+            
+            next_dest = -1
+            next_dist = float('inf')
+            
+            for dest in packages_remaining.keys():
+                dist = matriz_dist[current_node][dest]
+                if dist < next_dist:
+                    next_dist = dist
+                    next_dest = dest
+            
+            if next_dest == -1:
+                # No quedan paquetes, pero el bucle while debería haber terminado
+                # Esto puede pasar si un nodo es inalcanzable (dist=inf)
+                break 
+
+            # Viajar y entregar 1 paquete
+            total_distance += next_dist
+            current_node = next_dest
+            path.append(current_node)
+            
+            current_load -= 1
+            packages_remaining[next_dest] -= 1
+            if packages_remaining[next_dest] == 0:
+                del packages_remaining[next_dest]
+
+    # 4. Volver al depósito al finalizar
+    if current_node != depot_id:
+        total_distance += matriz_dist[current_node][depot_id]
+        path.append(depot_id)
+        
+    # 5. Crear el objeto Solucion
+    total_cost_final = total_distance + total_hub_cost
+    
+    # Verificación final
+    if packages_remaining:
+        return Solucion(costo_total=float('inf')) # El greedy falló
+
+    return Solucion(
+        ruta=path,
+        hubs_activados=hubs_activados_en_ruta,
+        costo_total=total_cost_final,
+        distancia_recorrida=total_distance,
+        costo_hubs=total_hub_cost
+    )
 # ---------------------------------
-def dos_opt(ruta, problema: Problema):
+
+def solver_heuristico(problema: Problema) -> Solucion:
+    """
+    Ejecuta el solver en modo HEURÍSTICO, probando un conjunto
+    limitado pero "inteligente" de configuraciones de hubs.
+    Ideal para casos medianos y grandes.
+    Estrategia:
+    1) Sin hubs (línea base)
+    2) Hubs heurísticos (suposición inteligente)
+    3) Búsqueda local ("flipping" de hubs)
+    Cada configuración genera una ruta greedy que luego se pule con 2-Opt.
+    """
+    print("Iniciando solver heurístico...")
+    # La mejor solución encontrada hasta ahora
+    mejor_solucion_global = Solucion(costo_total=float('inf'))
+
+    # 1. Experimento 1: Sin hubs (Línea Base)
+    hubs_vacios = set()
+    sol_sin_hubs = probar_configuracion_hubs(problema, hubs_vacios, "Sin Hubs")
+    if sol_sin_hubs.costo_total < mejor_solucion_global.costo_total:
+        mejor_solucion_global = sol_sin_hubs
+
+    # 2. Experimento 2: Hubs Heurísticos (Suposición Inteligente)
+    #
+    hubs_inteligentes = seleccionar_hubs_heuristico(problema)
+    
+    # Solo ejecutar si la lista no es la misma que ya probamos (vacía)
+    if hubs_inteligentes != hubs_vacios:
+        sol_hubs_intel = probar_configuracion_hubs(problema, hubs_inteligentes, "Hubs Heurísticos")
+        if sol_hubs_intel.costo_total < mejor_solucion_global.costo_total:
+            mejor_solucion_global = sol_hubs_intel
+
+    # 3. Experimento 3: Búsqueda Local ("Flipping")
+    #
+    print(f"  Experimento: Probando 'Búsqueda Local' (flipping {len(problema.hubs)} hubs)...")
+    for hub in problema.hubs:
+        hubs_a_probar = hubs_inteligentes.copy()
+        
+        if hub.id_nodo in hubs_a_probar:
+            hubs_a_probar.remove(hub.id_nodo)
+            desc = f"Flipping (Quitar Hub {hub.id_nodo})"
+        else:
+            hubs_a_probar.add(hub.id_nodo)
+            desc = f"Flipping (Añadir Hub {hub.id_nodo})"
+
+        sol_flip = probar_configuracion_hubs(problema, hubs_a_probar, desc)
+        if sol_flip.costo_total < mejor_solucion_global.costo_total:
+            mejor_solucion_global = sol_flip
+
+    print(f"Solver heurístico finalizado. Mejor costo encontrado: {mejor_solucion_global.costo_total:.2f}")
+    return mejor_solucion_global
+
+
+
+def dos_opt(ruta_inicial: List[int], problema: Problema) -> Solucion:
     """
     Aplica la optimización 2-opt para mejorar la ruta dada.
-    Cortar dos aristas de la ruta y reconectarlas de otra forma que reduzca el costo total.
+    Llama a 'evaluar_ruta_completa' para CADA nueva ruta candidata
+    para asegurar que sea viable (Opción B) y que el costo total
+    (distancia + hubs) haya mejorado.
     """
-    mejorado = True
-    mejor_ruta = ruta.copy()
-    mejor_costo, es_viable = evaluar_ruta_completa(mejor_ruta, problema)
-
-    if not es_viable:
-        print("Error: La ruta inicial del greedy no es viable.")
-        return ruta # Devuelve la ruta original sin tocar
     
+    # 1. Evaluar la ruta inicial para obtener la solución base
+    mejor_solucion = evaluar_ruta_completa(ruta_inicial, problema)
+    
+    if mejor_solucion.costo_total == float('inf'):
+        print("[2-Opt ADVERTENCIA] La ruta Greedy inicial no es viable. Saltando optimización.")
+        return mejor_solucion # Devuelve la solución inválida
+
+    # Usamos mejor_ruta_lista para iterar y manipular la lista
+    mejor_ruta_lista = ruta_inicial
+    
+    mejorado = True
     while mejorado:
         mejorado = False
-        for i in range(1, len(mejor_ruta) - 2):
-            for j in range(i + 1, len(mejor_ruta) - 1):
-                if j - i == 1: # aristas adyacentes, no tiene sentido
-                    continue
-                ruta_propuesta = mejor_ruta.copy()
-                ruta_propuesta[i:j+1] = reversed(ruta_propuesta[i:j+1])
+        
+        # Iterar de 1 a len-2 para no tocar el depósito de inicio/fin
+        for i in range(1, len(mejor_ruta_lista) - 2):
+            for j in range(i + 1, len(mejor_ruta_lista) - 1):
                 
-                nuevo_costo, es_viable = evaluar_ruta_completa(ruta_propuesta, problema)
+                # 1. Crear la nueva ruta candidata invirtiendo el segmento [i, j]
+                ruta_propuesta_lista = mejor_ruta_lista[:i] + list(reversed(mejor_ruta_lista[i:j+1])) + mejor_ruta_lista[j+1:]
                 
-                if es_viable and nuevo_costo < mejor_costo:
-                    mejor_ruta = ruta_propuesta
-                    mejor_costo = nuevo_costo
+                # 2. Evaluar la nueva ruta (viabilidad Y costo total)
+                solucion_propuesta = evaluar_ruta_completa(ruta_propuesta_lista, problema)
+                
+                # 3. Comparar el COSTO TOTAL (distancia + hubs)
+                # (Usamos un pequeño épsilon para la comparación de floats)
+                if solucion_propuesta.costo_total < (mejor_solucion.costo_total - 1e-5):
+                    # ¡Mejora encontrada!
+                    mejor_solucion = solucion_propuesta
+                    mejor_ruta_lista = ruta_propuesta_lista
                     mejorado = True
-    return mejor_ruta
+                    
+                    # Romper los bucles internos para reiniciar la búsqueda
+                    # con la nueva mejor ruta
+                    break
+            if mejorado:
+                break
+    
+    # Devuelve el objeto Solucion completo
+    return mejor_solucion
 
-def evaluar_ruta_completa(ruta: List[int], problema:Problema):
+def evaluar_ruta_completa(ruta: List[int], problema:Problema) -> Solucion:
     """
-    Evalúa una ruta completa simulando un camión.
-    Devuelve (costo_total_opcion_B, es_viable)
+    Evalúa una ruta completa simulando un camión (Opción B).
+    Devuelve un objeto Solucion, si la ruta es inválida, el objeto tendrá costo_total=inf
+    Si es válida, contendrá todos los datos.
     """
+    # 1. Preparar datos y estado inicial
     capacidad_max = problema.capacidad_camion
     carga_actual = capacidad_max
     distancia_total = 0.0
@@ -482,186 +772,106 @@ def evaluar_ruta_completa(ruta: List[int], problema:Problema):
     hubs_activados = set()
     
     dict_hubs = {h.id_nodo: h.costo_activacion for h in problema.hubs}
-
-    # Extraer el conjunto de TODOS los nodos de destino de los paquetes
-    # Nota: Esto es una simplificación. Asumimos que CUALQUIER visita a un nodo
-    # de destino entrega UN paquete, y que la ruta visita cada nodo
-    # la cantidad de veces necesaria.
-
-    # UNA MEJOR APROXIMACIÓN: Contar cuántos paquetes van a cada destino
+    
     paquetes_por_entregar = {}
     for p in problema.paquetes:
         dest = p.id_nodo_destino
         paquetes_por_entregar[dest] = paquetes_por_entregar.get(dest, 0) + 1
-        
-    # El primer nodo debe ser el depósito
-    if not ruta or ruta[0] != problema.deposito_id:
-        return float('inf'), False
+    
+    # --- 2. Verificaciones iniciales de la ruta ---
+    if not ruta or ruta[0] != problema.deposito_id or ruta[-1] != problema.deposito_id:
+        return Solucion(costo_total=float('inf'))
 
+    # --- 3. Simulación del viaje ---
     for i in range(len(ruta) - 1):
         nodo_origen = ruta[i]
         nodo_destino = ruta[i+1]
         
         dist_viaje = problema.grafo_distancias[nodo_origen][nodo_destino]
         if dist_viaje == float('inf'):
-            return float('inf'), False # Ruta imposible
+            return Solucion(costo_total=float('inf'))
         
         distancia_total += dist_viaje
         
-        # --- Lógica de Carga y Entrega ---
         es_recarga = (nodo_destino == problema.deposito_id or nodo_destino in dict_hubs)
         es_entrega = (nodo_destino in paquetes_por_entregar and paquetes_por_entregar[nodo_destino] > 0)
 
         if es_recarga:
             carga_actual = capacidad_max
-            # Activar hub si es necesario
             if nodo_destino in dict_hubs and nodo_destino not in hubs_activados:
                 costo_hubs += dict_hubs[nodo_destino]
                 hubs_activados.add(nodo_destino)
                 
         elif es_entrega:
-            if carga_actual == 0:
-                return float('inf'), False # Inválido: Intento de entrega sin carga
             
-            carga_actual -= 1
-            paquetes_por_entregar[nodo_destino] -= 1
-            # Si ya se entregaron todos, se saca del dict
+            # --- INICIO DE LA CORRECCIÓN ---
+            # En lugar de entregar 1 paquete, entregamos TODOS los que podamos.
+            
+            # Cuántos paquetes quedan por entregar en este destino
+            paquetes_pendientes_en_nodo = paquetes_por_entregar[nodo_destino]
+            
+            # Cuántos podemos entregar (limitado por la carga y los pendientes)
+            paquetes_a_entregar = min(carga_actual, paquetes_pendientes_en_nodo)
+            
+            if paquetes_a_entregar == 0:
+                # Si llegamos aquí, significa que la ruta nos trajo
+                # a un destino sin carga en el camión.
+                return Solucion(costo_total=float('inf')) 
+            
+            carga_actual -= paquetes_a_entregar
+            paquetes_por_entregar[nodo_destino] -= paquetes_a_entregar
+
             if paquetes_por_entregar[nodo_destino] == 0:
                 del paquetes_por_entregar[nodo_destino]
-        
-        # Si no es recarga ni entrega (ej. nodo de paso), la carga no cambia.
+            # --- FIN DE LA CORRECCIÓN ---
 
-    # --- Verificación Final ---
-    # ¿Se entregaron todos los paquetes?
+    # --- 4. Verificación Final ---
     if paquetes_por_entregar:
-        return float('inf'), False # Inválido: No se entregaron todos los paquetes
+        return Solucion(costo_total=float('inf')) 
     
+    # --- 5. Éxito: La ruta es válida ---
     costo_total = distancia_total + costo_hubs
-    return costo_total, True
-
-
-
-def generar_vecinos(ruta, cantidad_vecinos=20):
-    """
-    Genera rutas vecinas intercambiando dos nodos al azar.
-    """
-    vecinos = []
-    for _ in range(cantidad_vecinos):
-        i, j = sorted(random.sample(range(1, len(ruta) - 1), 2))
-        nueva = ruta.copy()
-        nueva[i], nueva[j] = nueva[j], nueva[i]
-        vecinos.append(nueva)
-    return vecinos
-
-def tabu_search(ruta_inicial, problema: Problema, iteraciones=200, tamaño_tabu=20):
-    """
-    Aplica la metaheurística Tabu Search a una ruta.
-    """
-    mejor_ruta = ruta_inicial.copy()
-    (mejor_costo, es_viable, 
-     mejor_dist, mejor_hubs, 
-     mejor_hubs_set) = evaluar_ruta_completa(mejor_ruta, problema)
     
-    if not es_viable:
-        print("ADVERTENCIA: La ruta inicial para Tabu Search no es viable. Deteniendo.")
-        # Devuelve datos vacíos para que el main los reporte
-        return Solucion(costo_total=float('inf'))
-
-    ruta_actual = mejor_ruta.copy()
-    lista_tabu = []
-
-    for _ in range(iteraciones):
-        # 1. Generar vecinos (usa tu función existente)
-        vecinos_rutas = generar_vecinos(ruta_actual) 
-        
-        # 2. Filtrar por lista tabú
-        vecinos_no_tabu = [v for v in vecinos_rutas if v not in lista_tabu]
-
-        if not vecinos_no_tabu:
-            continue # No hay movimientos no-tabú, saltar iteración
-
-        # 3. Evaluar a todos los vecinos
-        vecinos_evaluados = []
-        for ruta_vecina in vecinos_no_tabu:
-            (costo_vecino, es_viable_vecino, 
-             dist_vecino, hubs_costo_vecino, 
-             hubs_set_vecino) = evaluar_ruta_completa(ruta_vecina, problema)
-            
-            if es_viable_vecino:
-                # Guardamos todos los datos relevantes
-                vecinos_evaluados.append((
-                    costo_vecino, ruta_vecina, dist_vecino, 
-                    hubs_costo_vecino, hubs_set_vecino
-                ))
-        
-        if not vecinos_evaluados:
-            continue # Ningún vecino no-tabú fue viable
-
-        # 4. Encontrar el mejor vecino viable (Criterio de Aspiración Básico)
-        # El "mejor" es el de menor costo, INCLUSO si es peor que ruta_actual
-        # (esto permite a Tabu Search escapar de mínimos locales)
-        (mejor_vecino_costo, mejor_vecino_ruta, 
-         mejor_vecino_dist, mejor_vecino_hubs, 
-         mejor_vecino_hubs_set) = min(vecinos_evaluados, key=lambda item: item[0])
-        
-        # 5. Actualizar la MEJOR SOLUCIÓN GLOBAL (si aplica)
-        # Comparamos el costo de este vecino con el mejor costo global encontrado
-        if mejor_vecino_costo < mejor_costo:
-            mejor_ruta = mejor_vecino_ruta
-            mejor_costo = mejor_vecino_costo
-            mejor_dist = mejor_vecino_dist
-            mejor_hubs = mejor_vecino_hubs
-            mejor_hubs_set = mejor_vecino_hubs_set
-
-        # 6. Moverse al mejor vecino (ESTO ES TABU SEARCH)
-        ruta_actual = mejor_vecino_ruta
-        
-        # 7. Actualizar lista Tabú
-        lista_tabu.append(ruta_actual) # Añadir la ruta a la que nos movimos
-        if len(lista_tabu) > tamaño_tabu:
-            lista_tabu.pop(0) # Mantener el tamaño
-
-    # Al final del bucle, devolvemos la mejor solución encontrada
     return Solucion(
-        ruta=mejor_ruta,
-        hubs_activados=mejor_hubs_set,
-        costo_total=mejor_costo,
-        distancia_recorrida=mejor_dist,
-        costo_hubs=mejor_hubs
+        ruta=ruta,
+        hubs_activados=hubs_activados,
+        costo_total=costo_total,
+        distancia_recorrida=distancia_total,
+        costo_hubs=costo_hubs
     )
-
-def verificar_inicio_fin(ruta, deposito_id):
-    return ruta[0] == deposito_id and ruta[-1] == deposito_id
-
-def verificar_repeticiones(ruta, hubs_permitidos, deposito_id):
-    vistos = set()
-    for nodo in ruta:
-        if nodo in vistos and nodo not in hubs_permitidos and nodo != deposito_id:
-            return False
-        vistos.add(nodo)
-    return True
-
-def verificar_capacidad(ruta, problema):
-    capacidad = problema.capacidad_camion
-    carga = capacidad
-    for nodo in ruta:
-        # si es entrega
-        if nodo in [p.id_nodo_destino for p in problema.paquetes]:
-            carga -= 1
-        # si es hub o depósito -> recarga completa
-        if nodo == problema.deposito_id or nodo in [h.id_nodo for h in problema.hubs]:
-            carga = capacidad
-        if carga < 0:
-            return False
-    return True
-
-def verificar_costo(ruta, problema, costo_reportado):
-    costo_calculado = 0
-    for i in range(len(ruta) - 1):
-        costo_calculado += problema.grafo_distancias[ruta[i]][ruta[i+1]]
-    return abs(costo_calculado - costo_reportado) < 1e-3
-
-
+# ===========================================================
+def escribir_solucion_txt(solucion: Solucion, tiempo_ejecucion: float, nombre_archivo="solucion.txt"):
+    """
+    Genera el archivo solucion.txt con el formato exacto requerido por el TPO.
+   
+    """
+    try:
+        with open(nombre_archivo, 'w') as f:
+            # --- HUBS ACTIVADOS ---
+            f.write("// --- HUBS ACTIVADOS ---\n")
+            if not solucion.hubs_activados:
+                f.write("Ninguno\n")
+            else:
+                # Escribir IDs ordenados
+                for hub_id in sorted(list(solucion.hubs_activados)):
+                    f.write(f"{hub_id}\n")
+            
+            # --- RUTA OPTIMA ---
+            f.write("\n// --- RUTA OPTIMA ---\n")
+            if not solucion.ruta:
+                f.write("No se encontró ruta válida\n")
+            else:
+                f.write(" -> ".join(map(str, solucion.ruta)) + "\n")
+            
+            # --- METRICAS ---
+            f.write("\n// --- METRICAS ---\n")
+            f.write(f"COSTO_TOTAL: {solucion.costo_total:.2f}\n")
+            f.write(f"DISTANCIA_RECORRIDA: {solucion.distancia_recorrida:.2f}\n")
+            f.write(f"COSTO_HUBS: {solucion.costo_hubs:.2f}\n")
+            f.write(f"TIEMPO_EJECUCION: {tiempo_ejecucion:.6f} segundos\n")
+            
+    except IOError as e:
+        print(f"Error al escribir el archivo de solución: {e}")
 
 # ===========================================================
 # MAIN
@@ -681,46 +891,56 @@ def main():
         sys.exit(1)
 
     print("\n¡Archivo leído y procesado con éxito!")
-    imprimir_problema(problema)
-
-    inicio = time.time()
+    # imprimir_problema(problema) # Descomentar para debug
 
     print("Iniciando Floyd-Warshall...")
     floyd_warshall(problema)
 
-    print("--- MUESTRA DEL GRAFO (MATRIZ DE CAMINOS MINIMOS) ---")
-    imprimir_matriz(problema)
+    # print("--- MUESTRA DEL GRAFO (MATRIZ DE CAMINOS MINIMOS) ---")
+    # imprimir_matriz(problema) # Descomentar para debug
 
-    print("Generando solución inicial con vecino más cercano...")
-    ruta_inicial = nearest_neighbor_greedy(problema)
-    print(f"Ruta inicial generada: {ruta_inicial}")
+    # --- INICIO DEL SOLVER HÍBRIDO ---
+    inicio_solver = time.time()
+    
+    # Decidimos qué solver usar basado en el tamaño del problema
+    # (n=50 es un buen umbral, n=20 es el caso pequeño)
+    if problema.num_nodos < 50:
+        print("\n[MODO: EXHAUSTIVO] (n < 50) -> Buscando solución óptima.")
+        solucion_final = solver_exhaustivo(problema)
+    else:
+        print("\n[MODO: HEURÍSTICO] (n >= 50) -> Buscando solución eficiente.")
+        solucion_final = solver_heuristico(problema)
 
-    print("Mejorando ruta con 2-opt...")
-    ruta_mejorada = dos_opt(ruta_inicial, problema)
-    print(f"Ruta mejorada: {ruta_mejorada}")
-
-    print("Aplicando búsqueda tabú...")
-    solucion_final = tabu_search(ruta_mejorada, problema, iteraciones=200, tamaño_tabu=20)
-
-    fin = time.time()
-
-    tiempo = fin - inicio
+    fin_solver = time.time()
+    tiempo_ejecucion = fin_solver - inicio_solver
+    # --- FIN DEL SOLVER HÍBRIDO ---
 
     # --- Impresión de Resultados ---
     print("\n================ RESULTADO FINAL ================")
     if solucion_final.costo_total == float('inf'):
         print("NO SE ENCONTRÓ SOLUCIÓN VIABLE.")
     else:
-        print(f"Ruta final (resumida): {solucion_final.ruta[:10]}... (Total pasos: {len(solucion_final.ruta)})")
+        # --- MODIFICACIÓN ---
+        # Se eliminó el 'if' que acortaba la ruta.
+        ruta_str = " -> ".join(map(str, solucion_final.ruta))
+        # --- FIN DE LA MODIFICACIÓN ---
+            
+        print(f"Ruta final (expandida): {ruta_str} (Total pasos: {len(solucion_final.ruta)})")
         print("------------------------------------------------")
         print(f"Costo total: {solucion_final.costo_total:.2f}")
         print(f"Distancia total recorrida: {solucion_final.distancia_recorrida:.2f}")
         print(f"Costo activacion de hubs: {solucion_final.costo_hubs:.2f}")
         print(f"Hubs activados: {solucion_final.hubs_activados or 'Ninguno'}")
-        print(f"Tiempo de ejecucion: {tiempo:.5f} segundos")
+        print(f"Tiempo de ejecucion: {tiempo_ejecucion:.5f} segundos")
     print("================================================\n")
 
-    # (Aquí iría tu código para escribir solucion.txt)
+    # --- Escritura del Archivo de Salida ---
+    try:
+        escribir_solucion_txt(solucion_final, tiempo_ejecucion)
+        print("Archivo 'solucion.txt' generado con éxito.")
+    except Exception as e:
+        print(f"Error al escribir 'solucion.txt': {e}")
+
 
 if __name__ == "__main__":
     main()
