@@ -447,32 +447,99 @@ def dos_opt(ruta, problema: Problema):
     """
     mejorado = True
     mejor_ruta = ruta.copy()
+    mejor_costo, es_viable = evaluar_ruta_completa(mejor_ruta, problema)
+
+    if not es_viable:
+        print("Error: La ruta inicial del greedy no es viable.")
+        return ruta # Devuelve la ruta original sin tocar
+    
     while mejorado:
         mejorado = False
         for i in range(1, len(mejor_ruta) - 2):
             for j in range(i + 1, len(mejor_ruta) - 1):
                 if j - i == 1: # aristas adyacentes, no tiene sentido
                     continue
-                # calcular costo antes y después del swap
-                # Aristas: (a-b) y (c-d) se convierten en (a-c) y (b-d)
-                a, b = mejor_ruta[i-1], mejor_ruta[i]
-                c, d = mejor_ruta[j], mejor_ruta[j+1]
-                dist_antes = problema.grafo_distancias[a][b] + problema.grafo_distancias[c][d]
-                dist_despues = problema.grafo_distancias[a][c] + problema.grafo_distancias[b][d]
-                if dist_despues < dist_antes:
-                    mejor_ruta[i:j+1] = reversed(mejor_ruta[i:j+1])
+                ruta_propuesta = mejor_ruta.copy()
+                ruta_propuesta[i:j+1] = reversed(ruta_propuesta[i:j+1])
+                
+                nuevo_costo, es_viable = evaluar_ruta_completa(ruta_propuesta, problema)
+                
+                if es_viable and nuevo_costo < mejor_costo:
+                    mejor_ruta = ruta_propuesta
+                    mejor_costo = nuevo_costo
                     mejorado = True
     return mejor_ruta
 
-def evaluar_ruta(ruta, problema:Problema):
+def evaluar_ruta_completa(ruta: List[int], problema:Problema):
     """
-    Calcula el costo total de una ruta.
-    Suma las distancias entre nodos consecutivos.
+    Evalúa una ruta completa simulando un camión.
+    Devuelve (costo_total_opcion_B, es_viable)
     """
-    costo_total = 0.0
+    capacidad_max = problema.capacidad_camion
+    carga_actual = capacidad_max
+    distancia_total = 0.0
+    costo_hubs = 0.0
+    hubs_activados = set()
+    
+    dict_hubs = {h.id_nodo: h.costo_activacion for h in problema.hubs}
+
+    # Extraer el conjunto de TODOS los nodos de destino de los paquetes
+    # Nota: Esto es una simplificación. Asumimos que CUALQUIER visita a un nodo
+    # de destino entrega UN paquete, y que la ruta visita cada nodo
+    # la cantidad de veces necesaria.
+
+    # UNA MEJOR APROXIMACIÓN: Contar cuántos paquetes van a cada destino
+    paquetes_por_entregar = {}
+    for p in problema.paquetes:
+        dest = p.id_nodo_destino
+        paquetes_por_entregar[dest] = paquetes_por_entregar.get(dest, 0) + 1
+        
+    # El primer nodo debe ser el depósito
+    if not ruta or ruta[0] != problema.deposito_id:
+        return float('inf'), False
+
     for i in range(len(ruta) - 1):
-        costo_total += problema.grafo_distancias[ruta[i]][ruta[i + 1]]
-    return costo_total
+        nodo_origen = ruta[i]
+        nodo_destino = ruta[i+1]
+        
+        dist_viaje = problema.grafo_distancias[nodo_origen][nodo_destino]
+        if dist_viaje == float('inf'):
+            return float('inf'), False # Ruta imposible
+        
+        distancia_total += dist_viaje
+        
+        # --- Lógica de Carga y Entrega ---
+        es_recarga = (nodo_destino == problema.deposito_id or nodo_destino in dict_hubs)
+        es_entrega = (nodo_destino in paquetes_por_entregar and paquetes_por_entregar[nodo_destino] > 0)
+
+        if es_recarga:
+            carga_actual = capacidad_max
+            # Activar hub si es necesario
+            if nodo_destino in dict_hubs and nodo_destino not in hubs_activados:
+                costo_hubs += dict_hubs[nodo_destino]
+                hubs_activados.add(nodo_destino)
+                
+        elif es_entrega:
+            if carga_actual == 0:
+                return float('inf'), False # Inválido: Intento de entrega sin carga
+            
+            carga_actual -= 1
+            paquetes_por_entregar[nodo_destino] -= 1
+            # Si ya se entregaron todos, se saca del dict
+            if paquetes_por_entregar[nodo_destino] == 0:
+                del paquetes_por_entregar[nodo_destino]
+        
+        # Si no es recarga ni entrega (ej. nodo de paso), la carga no cambia.
+
+    # --- Verificación Final ---
+    # ¿Se entregaron todos los paquetes?
+    if paquetes_por_entregar:
+        return float('inf'), False # Inválido: No se entregaron todos los paquetes
+    
+    costo_total = distancia_total + costo_hubs
+    return costo_total, True
+
+
 
 def generar_vecinos(ruta, cantidad_vecinos=20):
     """
@@ -491,35 +558,110 @@ def tabu_search(ruta_inicial, problema: Problema, iteraciones=200, tamaño_tabu=
     Aplica la metaheurística Tabu Search a una ruta.
     """
     mejor_ruta = ruta_inicial.copy()
-    mejor_costo = evaluar_ruta(mejor_ruta, problema)
+    (mejor_costo, es_viable, 
+     mejor_dist, mejor_hubs, 
+     mejor_hubs_set) = evaluar_ruta_completa(mejor_ruta, problema)
+    
+    if not es_viable:
+        print("ADVERTENCIA: La ruta inicial para Tabu Search no es viable. Deteniendo.")
+        # Devuelve datos vacíos para que el main los reporte
+        return Solucion(costo_total=float('inf'))
+
     ruta_actual = mejor_ruta.copy()
     lista_tabu = []
 
     for _ in range(iteraciones):
-        vecinos = generar_vecinos(ruta_actual)
-        vecinos_validos = [v for v in vecinos if v not in lista_tabu]
+        # 1. Generar vecinos (usa tu función existente)
+        vecinos_rutas = generar_vecinos(ruta_actual) 
+        
+        # 2. Filtrar por lista tabú
+        vecinos_no_tabu = [v for v in vecinos_rutas if v not in lista_tabu]
 
-        if not vecinos_validos:
-            continue
+        if not vecinos_no_tabu:
+            continue # No hay movimientos no-tabú, saltar iteración
 
-        # Elegir el vecino con menor costo
-        mejor_vecino = min(vecinos_validos, key=lambda r: evaluar_ruta(r, problema))
-        costo_vecino = evaluar_ruta(mejor_vecino, problema)
+        # 3. Evaluar a todos los vecinos
+        vecinos_evaluados = []
+        for ruta_vecina in vecinos_no_tabu:
+            (costo_vecino, es_viable_vecino, 
+             dist_vecino, hubs_costo_vecino, 
+             hubs_set_vecino) = evaluar_ruta_completa(ruta_vecina, problema)
+            
+            if es_viable_vecino:
+                # Guardamos todos los datos relevantes
+                vecinos_evaluados.append((
+                    costo_vecino, ruta_vecina, dist_vecino, 
+                    hubs_costo_vecino, hubs_set_vecino
+                ))
+        
+        if not vecinos_evaluados:
+            continue # Ningún vecino no-tabú fue viable
 
-        # Si mejora, actualizamos
-        if costo_vecino < mejor_costo:
-            mejor_ruta = mejor_vecino.copy()
-            mejor_costo = costo_vecino
+        # 4. Encontrar el mejor vecino viable (Criterio de Aspiración Básico)
+        # El "mejor" es el de menor costo, INCLUSO si es peor que ruta_actual
+        # (esto permite a Tabu Search escapar de mínimos locales)
+        (mejor_vecino_costo, mejor_vecino_ruta, 
+         mejor_vecino_dist, mejor_vecino_hubs, 
+         mejor_vecino_hubs_set) = min(vecinos_evaluados, key=lambda item: item[0])
+        
+        # 5. Actualizar la MEJOR SOLUCIÓN GLOBAL (si aplica)
+        # Comparamos el costo de este vecino con el mejor costo global encontrado
+        if mejor_vecino_costo < mejor_costo:
+            mejor_ruta = mejor_vecino_ruta
+            mejor_costo = mejor_vecino_costo
+            mejor_dist = mejor_vecino_dist
+            mejor_hubs = mejor_vecino_hubs
+            mejor_hubs_set = mejor_vecino_hubs_set
 
-        # Actualizar lista Tabú
-        lista_tabu.append(mejor_vecino)
+        # 6. Moverse al mejor vecino (ESTO ES TABU SEARCH)
+        ruta_actual = mejor_vecino_ruta
+        
+        # 7. Actualizar lista Tabú
+        lista_tabu.append(ruta_actual) # Añadir la ruta a la que nos movimos
         if len(lista_tabu) > tamaño_tabu:
-            lista_tabu.pop(0)
+            lista_tabu.pop(0) # Mantener el tamaño
 
-        # Mover a ese vecino
-        ruta_actual = mejor_vecino.copy()
+    # Al final del bucle, devolvemos la mejor solución encontrada
+    return Solucion(
+        ruta=mejor_ruta,
+        hubs_activados=mejor_hubs_set,
+        costo_total=mejor_costo,
+        distancia_recorrida=mejor_dist,
+        costo_hubs=mejor_hubs
+    )
 
-    return mejor_ruta
+def verificar_inicio_fin(ruta, deposito_id):
+    return ruta[0] == deposito_id and ruta[-1] == deposito_id
+
+def verificar_repeticiones(ruta, hubs_permitidos, deposito_id):
+    vistos = set()
+    for nodo in ruta:
+        if nodo in vistos and nodo not in hubs_permitidos and nodo != deposito_id:
+            return False
+        vistos.add(nodo)
+    return True
+
+def verificar_capacidad(ruta, problema):
+    capacidad = problema.capacidad_camion
+    carga = capacidad
+    for nodo in ruta:
+        # si es entrega
+        if nodo in [p.id_nodo_destino for p in problema.paquetes]:
+            carga -= 1
+        # si es hub o depósito -> recarga completa
+        if nodo == problema.deposito_id or nodo in [h.id_nodo for h in problema.hubs]:
+            carga = capacidad
+        if carga < 0:
+            return False
+    return True
+
+def verificar_costo(ruta, problema, costo_reportado):
+    costo_calculado = 0
+    for i in range(len(ruta) - 1):
+        costo_calculado += problema.grafo_distancias[ruta[i]][ruta[i+1]]
+    return abs(costo_calculado - costo_reportado) < 1e-3
+
+
 
 # ===========================================================
 # MAIN
@@ -549,13 +691,6 @@ def main():
     print("--- MUESTRA DEL GRAFO (MATRIZ DE CAMINOS MINIMOS) ---")
     imprimir_matriz(problema)
 
-    # estado_inicial_greedy = Camion(problema)
-    # camion = Camion(problema)
-    # mejor_solucion = encontrar_solucion_greedy(estado_inicial_greedy, problema)
-
-    # print("Iniciando backtracking...")
-    # resolver_backtracking(camion, mejor_solucion, problema)
-
     print("Generando solución inicial con vecino más cercano...")
     ruta_inicial = nearest_neighbor_greedy(problema)
     print(f"Ruta inicial generada: {ruta_inicial}")
@@ -565,33 +700,27 @@ def main():
     print(f"Ruta mejorada: {ruta_mejorada}")
 
     print("Aplicando búsqueda tabú...")
-    ruta_final = tabu_search(ruta_mejorada, problema)
-    print(f"Ruta final después de búsqueda tabú: {ruta_final}")
-    
-    # Construir la solución final
-    solucion = Solucion(
-        ruta=ruta_final,
-        costo_total=evaluar_ruta(ruta_final, problema),
-    )
-    
+    solucion_final = tabu_search(ruta_mejorada, problema, iteraciones=200, tamaño_tabu=20)
+
     fin = time.time()
 
     tiempo = fin - inicio
 
+    # --- Impresión de Resultados ---
     print("\n================ RESULTADO FINAL ================")
-    print(f"Ruta inicial (Greedy):      {ruta_inicial}")
-    print(f"Ruta tras 2-opt:           {ruta_mejorada}")
-    print(f"Ruta final (Tabu Search):  {ruta_final}")
-    print("------------------------------------------------")
-    print(f"Distancia total: {evaluar_ruta(ruta_final, problema):.2f}")
+    if solucion_final.costo_total == float('inf'):
+        print("NO SE ENCONTRÓ SOLUCIÓN VIABLE.")
+    else:
+        print(f"Ruta final (resumida): {solucion_final.ruta[:10]}... (Total pasos: {len(solucion_final.ruta)})")
+        print("------------------------------------------------")
+        print(f"Costo total: {solucion_final.costo_total:.2f}")
+        print(f"Distancia total recorrida: {solucion_final.distancia_recorrida:.2f}")
+        print(f"Costo activacion de hubs: {solucion_final.costo_hubs:.2f}")
+        print(f"Hubs activados: {solucion_final.hubs_activados or 'Ninguno'}")
+        print(f"Tiempo de ejecucion: {tiempo:.5f} segundos")
     print("================================================\n")
 
-    print(f"Tiempo de ejecucion: {tiempo:.5f} segundos")
-    print(f"Mejor ruta: {solucion.ruta}")
-    print(f"Costo total: {solucion.costo_total:.5f}")
-    print(f"Costo activacion de hubs: {solucion.costo_hubs:.5f}")
-    print(f"Distancia total recorrida: {solucion.distancia_recorrida:.5f}")
-    print(f"Hubs activados: {solucion.hubs_activados}")
+    # (Aquí iría tu código para escribir solucion.txt)
 
 if __name__ == "__main__":
     main()
