@@ -3,7 +3,7 @@
 import sys
 from dataclasses import dataclass
 import time
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple
 
 # ===========================================================
 # CLASES
@@ -346,7 +346,8 @@ class Solucion:
         self.hubs_activados = camion.hubs_activados_actual.copy()
         self.paquetes_pendientes = []
 
-def encontrar_solucion_greedy(camion: Camion, problema: Problema):
+def encontrar_solucion_greedy(problema: Problema):
+    camion = Camion(problema)
     solucion = Solucion()
     while len(camion.paquetes_pendientes_actual) > 0:
         dist_minima = float("inf")
@@ -429,28 +430,53 @@ def encontrar_solucion_greedy(camion: Camion, problema: Problema):
 
     dist_retorno = problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
     costo_final = camion.costo_total_actual + dist_retorno
-    solucion.actualizar_solucion(camion, problema, costo_final, dist_retorno) 
-    
-    #solucion.costo_total = camion.costo_total_actual + dist_retorno
-    #solucion.distancia_recorrida = camion.distancia_recorrida_actual + dist_retorno
-    #solucion.costo_hubs = camion.costo_hubs_actual
-    #solucion.hubs_activados = camion.hubs_activados_actual.copy()
-    #solucion.ruta = camion.ruta_actual.copy() + [problema.deposito_id]
-    #solucion.paquetes_pendientes = []
+    solucion.actualizar_solucion(camion, problema, costo_final, dist_retorno)
     
     return solucion
 
-def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema):
+# NUEVO: Función para estimar costo restante (ajustada: menos conservadora, ignora hubs para permitir exploración)
+def estimar_costo_restante(camion: Camion, problema: Problema) -> float:
     """
-    Función recursiva de backtracking (Opción B: Ruteo Simple).
+    Estima el costo mínimo restante: suma distancias mínimas a paquetes pendientes + retorno al depósito.
+    Ahora ignora costos de hubs para ser menos conservadora y permitir más exploración.
     """
+    if not camion.paquetes_pendientes_actual:
+        return problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
+    
+    costo_estimado = 0.0
+    for paquete in camion.paquetes_pendientes_actual:
+        costo_estimado += problema.grafo_distancias[camion.nodo_actual][paquete.id_nodo_destino]
+    costo_estimado += problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
+    return costo_estimado  # Sin sumar costos de hubs para ser menos restrictiva
 
-    # --- Casos base ---
-    # Poda
-    if camion.costo_total_actual >= solucion.costo_total:
+# NUEVO: Resolver con backtracking (DFS), memoization y estimación
+def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema, memo: Dict[Tuple, float], profundidad: int = 0, max_profundidad: int = 1000):
+    """
+    DFS recursivo con memoization y poda por estimación de costo restante.
+    """
+    # NUEVO: Límite de profundidad para evitar stack overflow
+    if profundidad > max_profundidad:
         return
     
-    # Exito
+    # NUEVO: Estado para memoization (hashable)
+    estado = (
+        frozenset(p.id for p in camion.paquetes_pendientes_actual),
+        camion.carga_actual,
+        camion.nodo_actual,
+        frozenset(camion.hubs_activados_actual)
+    )
+    
+    # NUEVO: Verificar memo
+    if estado in memo and camion.costo_total_actual >= memo[estado]:
+        return
+    memo[estado] = camion.costo_total_actual
+    
+    # NUEVO: Poda por estimación de costo restante
+    estimacion = estimar_costo_restante(camion, problema)
+    if camion.costo_total_actual + estimacion >= solucion.costo_total:
+        return
+    
+    # --- Casos base ---
     if len(camion.paquetes_pendientes_actual) == 0:
         dist_retorno = problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
         costo_final = dist_retorno + camion.costo_total_actual
@@ -458,44 +484,38 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
             solucion.actualizar_solucion(camion, problema, costo_final, dist_retorno)
         return
     
-    # Entregar
+    # Entregar (si hay carga)
     if camion.carga_actual > 0:
-
-        K_VECINOS_A_PROBAR = 2
+        K_VECINOS_A_PROBAR = 10
         opciones_con_distancia = []
         
         for paquete in camion.paquetes_pendientes_actual:
             if paquete.id_nodo_destino != camion.nodo_actual:
-                
                 dist = problema.grafo_distancias[camion.nodo_actual][paquete.id_nodo_destino]
                 opciones_con_distancia.append((dist, paquete))
         
         opciones_con_distancia.sort(key=lambda tupla: tupla[0])
         opciones_recortadas = opciones_con_distancia[:K_VECINOS_A_PROBAR]
         opciones = [paquete for dist, paquete in opciones_recortadas]
-
+        
         for nodo_destino_entrega in opciones:
-            # Aplicar
             nodo_anterior = camion.nodo_actual
             dist_viaje = problema.grafo_distancias[camion.nodo_actual][nodo_destino_entrega.id_nodo_destino]
             camion.aplicar_entrega(nodo_destino_entrega, problema, dist_viaje)
-
-            # Explorar
-            resolver_backtracking(camion, solucion, problema) # Con el nuevo estado del camion
-
-            # Deshacer
+            
+            # NUEVO: Llamada recursiva con profundidad incrementada
+            resolver_backtracking(camion, solucion, problema, memo, profundidad + 1, max_profundidad)
+            
             camion.deshacer_entrega(nodo_destino_entrega, nodo_anterior, dist_viaje)
     
-    # Recargar
+    # Recargar (si no está lleno)
     if camion.carga_actual < camion.capacidad_maxima:
-        
-        K_VECINOS_RECARGA_A_PROBAR = 2
+        K_VECINOS_RECARGA_A_PROBAR = 10
         opciones_recarga_con_distancia = []
         nodos_de_recarga = [problema.deposito_id] + [hub.id_nodo for hub in problema.hubs]
-
+        
         for id_nodo in nodos_de_recarga:
             if id_nodo != camion.nodo_actual:
-        
                 dist = problema.grafo_distancias[camion.nodo_actual][id_nodo]
                 opciones_recarga_con_distancia.append((dist, id_nodo))
         
@@ -503,17 +523,13 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
         opciones_recortadas = opciones_recarga_con_distancia[:K_VECINOS_RECARGA_A_PROBAR]
         
         for dist_viaje, nodo_destino_recarga in opciones_recortadas:
-
-            # Aplicar
             carga_anterior = camion.carga_actual
             nodo_anterior = camion.nodo_actual
-
             activacion_de_hub, costo_activacion = camion.aplicar_recarga(nodo_destino_recarga, dist_viaje)
-    
-            # Explorar
-            resolver_backtracking(camion, solucion, problema) 
-
-            # Deshacer
+            
+            # NUEVO: Llamada recursiva con profundidad incrementada
+            resolver_backtracking(camion, solucion, problema, memo, profundidad + 1, max_profundidad)
+            
             camion.deshacer_recarga(activacion_de_hub, nodo_destino_recarga, costo_activacion, carga_anterior, nodo_anterior, dist_viaje)
 
 # ===========================================================
@@ -544,18 +560,29 @@ def main():
     print("--- MUESTRA DEL GRAFO (MATRIZ DE CAMINOS MINIMOS) ---")
     imprimir_matriz(problema)
 
-    estado_inicial_greedy = Camion(problema)
     camion = Camion(problema)
-    mejor_solucion = encontrar_solucion_greedy(estado_inicial_greedy, problema)
 
-    print("Iniciando backtracking...")
-    resolver_backtracking(camion, mejor_solucion, problema)
+    mejor_solucion = Solucion()
     
-    fin = time.time()
+    # Ejecutar greedy por separado para comparación
+    solucion_greedy = encontrar_solucion_greedy(problema)
+    
+    memo: Dict[Tuple, float] = {}
+    
+    print("Iniciando backtracking con memoization, estimación y DFS...")
+    resolver_backtracking(camion, mejor_solucion, problema, memo)
+    
+    print(f"[DEBUG] Solución greedy - Costo: {solucion_greedy.costo_total:.2f}")
+    if mejor_solucion.costo_total < solucion_greedy.costo_total:
+        print("[DEBUG] Backtracking encontró una mejor solución")
+    else: 
+        print("[DEBUG] Backtracking NO mejoró greedy")
+        mejor_solucion = solucion_greedy
 
+    fin = time.time()
     tiempo = fin - inicio
 
-    print(f"Tiempo de ejecucion: {tiempo:.5f} segundos")
+    print(f"\nTiempo de ejecucion: {tiempo:.5f} segundos")
     print(f"Mejor ruta: {mejor_solucion.ruta}")
     print(f"Costo total: {mejor_solucion.costo_total:.5f}")
     print(f"Costo activacion de hubs: {mejor_solucion.costo_hubs:.5f}")
