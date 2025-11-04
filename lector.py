@@ -281,7 +281,7 @@ class Camion:
         self.dict_hubs = {hub.id_nodo: hub.costo_activacion for hub in p.hubs}
         self.costo_hubs_actual: float = 0.0
 
-    def aplicar_entrega(self, nodo_destino_entrega: Paquete, problema: Problema, dist_viaje: float):
+    def aplicar_entrega(self, nodo_destino_entrega: Paquete, dist_viaje: float):
         self.distancia_recorrida_actual += dist_viaje
         self.costo_total_actual += dist_viaje
         self.nodo_actual = nodo_destino_entrega.id_nodo_destino
@@ -368,7 +368,7 @@ def encontrar_solucion_greedy(problema: Problema):
                     paquete_mas_cercano = paquete
 
             if paquete_mas_cercano:
-                camion.aplicar_entrega(paquete_mas_cercano, problema, dist_minima)
+                camion.aplicar_entrega(paquete_mas_cercano, dist_minima)
         
         # SI ESTA VACIO
         elif camion.carga_actual == 0:
@@ -420,7 +420,7 @@ def encontrar_solucion_greedy(problema: Problema):
             if dist_minima_paquete < dist_minima_recarga:
                 dist_minima = dist_minima_paquete
 
-                camion.aplicar_entrega(paquete_mas_cercano, problema, dist_minima)
+                camion.aplicar_entrega(paquete_mas_cercano, dist_minima)
 
             else:
                 dist_minima = dist_minima_recarga
@@ -450,13 +450,10 @@ def estimar_costo_restante(camion: Camion, problema: Problema) -> float:
     return costo_estimado  # Sin sumar costos de hubs para ser menos restrictiva
 
 # NUEVO: Resolver con backtracking (DFS), memoization y estimación
-def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema, memo: Dict[Tuple, float], profundidad: int = 0, max_profundidad: int = 1000):
+def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema, memo: Dict[Tuple, float]):
     """
     DFS recursivo con memoization y poda por estimación de costo restante.
     """
-    # NUEVO: Límite de profundidad para evitar stack overflow
-    if profundidad > max_profundidad:
-        return
     
     # NUEVO: Estado para memoization (hashable)
     estado = (
@@ -501,10 +498,10 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
         for nodo_destino_entrega in opciones:
             nodo_anterior = camion.nodo_actual
             dist_viaje = problema.grafo_distancias[camion.nodo_actual][nodo_destino_entrega.id_nodo_destino]
-            camion.aplicar_entrega(nodo_destino_entrega, problema, dist_viaje)
+            camion.aplicar_entrega(nodo_destino_entrega, dist_viaje)
             
             # NUEVO: Llamada recursiva con profundidad incrementada
-            resolver_backtracking(camion, solucion, problema, memo, profundidad + 1, max_profundidad)
+            resolver_backtracking(camion, solucion, problema, memo)
             
             camion.deshacer_entrega(nodo_destino_entrega, nodo_anterior, dist_viaje)
     
@@ -528,7 +525,7 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
             activacion_de_hub, costo_activacion = camion.aplicar_recarga(nodo_destino_recarga, dist_viaje)
             
             # NUEVO: Llamada recursiva con profundidad incrementada
-            resolver_backtracking(camion, solucion, problema, memo, profundidad + 1, max_profundidad)
+            resolver_backtracking(camion, solucion, problema, memo)
             
             camion.deshacer_recarga(activacion_de_hub, nodo_destino_recarga, costo_activacion, carga_anterior, nodo_anterior, dist_viaje)
 
