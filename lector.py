@@ -449,8 +449,7 @@ def estimar_costo_restante(camion: Camion, problema: Problema) -> float:
     costo_estimado += problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
     return costo_estimado  # Sin sumar costos de hubs para ser menos restrictiva
 
-# NUEVO: Resolver con backtracking (DFS), memoization y estimación
-def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema, memo: Dict[Tuple, float], profundidad: int = 0, max_profundidad: int = 1000):
+def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema, memo: Dict[Tuple, float], k_vecinos: int, profundidad: int = 0, max_profundidad: int = 1000):
     """
     DFS recursivo con memoization y poda por estimación de costo restante.
     """
@@ -473,13 +472,13 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
     
     # NUEVO: Poda por estimación de costo restante
     estimacion = estimar_costo_restante(camion, problema)
-    if camion.costo_total_actual + estimacion >= solucion.costo_total:
+    if camion.costo_total_actual + estimacion * 0.5 >= solucion.costo_total:
         return
     
     # --- Casos base ---
     if len(camion.paquetes_pendientes_actual) == 0:
-        print("[DEBUG] Caso base - 0 paquetes pendientes", camion.costo_total_actual)
         dist_retorno = problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
+        print("[DEBUG] Caso base - Costo total:", camion.costo_total_actual + dist_retorno)
         costo_final = dist_retorno + camion.costo_total_actual
         if costo_final < solucion.costo_total:
             solucion.actualizar_solucion(camion, problema, costo_final, dist_retorno)
@@ -487,7 +486,6 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
     
     # Entregar (si hay carga)
     if camion.carga_actual > 0:
-        K_VECINOS_A_PROBAR = 10
         opciones_con_distancia = []
         
         for paquete in camion.paquetes_pendientes_actual:
@@ -496,19 +494,18 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
                 opciones_con_distancia.append((dist, paquete))
         
         opciones_con_distancia.sort(key=lambda tupla: tupla[0])
-        opciones_recortadas = opciones_con_distancia[:K_VECINOS_A_PROBAR]
+        opciones_recortadas = opciones_con_distancia[:k_vecinos]
         
         for dist_viaje_entrega, nodo_destino_entrega in opciones_recortadas:
             nodo_anterior = camion.nodo_actual
             camion.aplicar_entrega(nodo_destino_entrega, problema, dist_viaje_entrega)
             
-            resolver_backtracking(camion, solucion, problema, memo, profundidad + 1, max_profundidad)
+            resolver_backtracking(camion, solucion, problema, memo, k_vecinos, profundidad + 1, max_profundidad)
             
             camion.deshacer_entrega(nodo_destino_entrega, nodo_anterior, dist_viaje_entrega)
     
     # Recargar (si no está lleno)
     if camion.carga_actual < camion.capacidad_maxima:
-        K_VECINOS_RECARGA_A_PROBAR = 10
         opciones_recarga_con_distancia = []
         nodos_de_recarga = [problema.deposito_id] + [hub.id_nodo for hub in problema.hubs]
         
@@ -518,14 +515,14 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
                 opciones_recarga_con_distancia.append((dist, id_nodo))
         
         opciones_recarga_con_distancia.sort(key=lambda tupla: tupla[0])
-        opciones_recortadas = opciones_recarga_con_distancia[:K_VECINOS_RECARGA_A_PROBAR]
+        opciones_recortadas = opciones_recarga_con_distancia[:k_vecinos]
         
         for dist_viaje_recarga, nodo_destino_recarga in opciones_recortadas:
             carga_anterior = camion.carga_actual
             nodo_anterior = camion.nodo_actual
             activacion_de_hub, costo_activacion = camion.aplicar_recarga(nodo_destino_recarga, dist_viaje_recarga)
             
-            resolver_backtracking(camion, solucion, problema, memo, profundidad + 1, max_profundidad)
+            resolver_backtracking(camion, solucion, problema, memo, k_vecinos, profundidad + 1, max_profundidad)
             
             camion.deshacer_recarga(activacion_de_hub, nodo_destino_recarga, costo_activacion, carga_anterior, nodo_anterior, dist_viaje_recarga)
 
@@ -567,7 +564,7 @@ def main():
     memo: Dict[Tuple, float] = {}
     
     print("Iniciando backtracking con memoization, estimación y DFS...")
-    resolver_backtracking(camion, mejor_solucion, problema, memo)
+    resolver_backtracking(camion, mejor_solucion, problema, memo, 3)
     
     print(f"[DEBUG] Solución greedy - Costo: {solucion_greedy.costo_total:.2f}")
     if mejor_solucion.costo_total < solucion_greedy.costo_total:
