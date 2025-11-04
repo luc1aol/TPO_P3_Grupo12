@@ -4,6 +4,7 @@ import sys
 from dataclasses import dataclass
 import time
 from typing import List, Optional, Dict, Tuple
+import copy
 
 # ===========================================================
 # CLASES
@@ -281,7 +282,7 @@ class Camion:
         self.dict_hubs = {hub.id_nodo: hub.costo_activacion for hub in p.hubs}
         self.costo_hubs_actual: float = 0.0
 
-    def aplicar_entrega(self, nodo_destino_entrega: Paquete, problema: Problema, dist_viaje: float):
+    def aplicar_entrega(self, nodo_destino_entrega: Paquete, dist_viaje: float):
         self.distancia_recorrida_actual += dist_viaje
         self.costo_total_actual += dist_viaje
         self.nodo_actual = nodo_destino_entrega.id_nodo_destino
@@ -368,7 +369,7 @@ def encontrar_solucion_greedy(problema: Problema):
                     paquete_mas_cercano = paquete
 
             if paquete_mas_cercano:
-                camion.aplicar_entrega(paquete_mas_cercano, problema, dist_minima)
+                camion.aplicar_entrega(paquete_mas_cercano, dist_minima)
         
         # SI ESTA VACIO
         elif camion.carga_actual == 0:
@@ -420,7 +421,7 @@ def encontrar_solucion_greedy(problema: Problema):
             if dist_minima_paquete < dist_minima_recarga:
                 dist_minima = dist_minima_paquete
 
-                camion.aplicar_entrega(paquete_mas_cercano, problema, dist_minima)
+                camion.aplicar_entrega(paquete_mas_cercano, dist_minima)
 
             else:
                 dist_minima = dist_minima_recarga
@@ -434,29 +435,23 @@ def encontrar_solucion_greedy(problema: Problema):
     
     return solucion
 
-# NUEVO: Función para estimar costo restante (ajustada: menos conservadora, ignora hubs para permitir exploración)
 def estimar_costo_restante(camion: Camion, problema: Problema) -> float:
-    """
-    Estima el costo mínimo restante: suma distancias mínimas a paquetes pendientes + retorno al depósito.
-    Ahora ignora costos de hubs para ser menos conservadora y permitir más exploración.
-    """
     if not camion.paquetes_pendientes_actual:
         return problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
-    
-    costo_estimado = 0.0
-    for paquete in camion.paquetes_pendientes_actual:
-        costo_estimado += problema.grafo_distancias[camion.nodo_actual][paquete.id_nodo_destino]
-    costo_estimado += problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
-    return costo_estimado  # Sin sumar costos de hubs para ser menos restrictiva
+
+    min_dist = min(
+        problema.grafo_distancias[camion.nodo_actual][p.id_nodo_destino]
+        for p in camion.paquetes_pendientes_actual
+    )
+    # Agregamos una pequeña estimación del regreso
+    return min_dist + problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
+
 
 # NUEVO: Resolver con backtracking (DFS), memoization y estimación
-def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema, memo: Dict[Tuple, float], profundidad: int = 0, max_profundidad: int = 1000):
+def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema, memo: Dict[Tuple, float]):
     """
     DFS recursivo con memoization y poda por estimación de costo restante.
     """
-    # NUEVO: Límite de profundidad para evitar stack overflow
-    if profundidad > max_profundidad:
-        return
     
     # NUEVO: Estado para memoization (hashable)
     estado = (
@@ -474,6 +469,7 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
     # NUEVO: Poda por estimación de costo restante
     estimacion = estimar_costo_restante(camion, problema)
     if camion.costo_total_actual + estimacion >= solucion.costo_total:
+        print("eiiiiii") # SE DETIENE ACA
         return
     
     # --- Casos base ---
@@ -487,8 +483,7 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
     
     # Entregar (si hay carga)
     if camion.carga_actual > 0:
-        K_VECINOS_A_PROBAR = 10
-        opciones_con_distancia = []
+        opciones = []
         
         for paquete in camion.paquetes_pendientes_actual:
             if paquete.id_nodo_destino != camion.nodo_actual:
@@ -508,14 +503,12 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
     
     # Recargar (si no está lleno)
     if camion.carga_actual < camion.capacidad_maxima:
-        K_VECINOS_RECARGA_A_PROBAR = 10
-        opciones_recarga_con_distancia = []
+        opciones_recarga = []
         nodos_de_recarga = [problema.deposito_id] + [hub.id_nodo for hub in problema.hubs]
         
         for id_nodo in nodos_de_recarga:
             if id_nodo != camion.nodo_actual:
-                dist = problema.grafo_distancias[camion.nodo_actual][id_nodo]
-                opciones_recarga_con_distancia.append((dist, id_nodo))
+                opciones_recarga.append(id_nodo)
         
         opciones_recarga_con_distancia.sort(key=lambda tupla: tupla[0])
         opciones_recortadas = opciones_recarga_con_distancia[:K_VECINOS_RECARGA_A_PROBAR]
@@ -558,26 +551,20 @@ def main():
     imprimir_matriz(problema)
 
     camion = Camion(problema)
-
-    mejor_solucion = Solucion()
     
     # Ejecutar greedy por separado para comparación
     solucion_greedy = encontrar_solucion_greedy(problema)
+    mejor_solucion = copy.deepcopy(solucion_greedy)
     
     memo: Dict[Tuple, float] = {}
     
     print("Iniciando backtracking con memoization, estimación y DFS...")
     resolver_backtracking(camion, mejor_solucion, problema, memo)
     
-    print(f"[DEBUG] Solución greedy - Costo: {solucion_greedy.costo_total:.2f}")
-    if mejor_solucion.costo_total < solucion_greedy.costo_total:
-        print("[DEBUG] Backtracking encontró una mejor solución")
-    else: 
-        print("[DEBUG] Backtracking NO mejoró greedy")
-        mejor_solucion = solucion_greedy
-
     fin = time.time()
     tiempo = fin - inicio
+
+    print("GREEDY: ", solucion_greedy.costo_total)
 
     print(f"\nTiempo de ejecucion: {tiempo:.5f} segundos")
     print(f"Mejor ruta: {mejor_solucion.ruta}")
