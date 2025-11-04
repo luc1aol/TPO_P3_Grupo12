@@ -478,6 +478,7 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
     
     # --- Casos base ---
     if len(camion.paquetes_pendientes_actual) == 0:
+        print("[DEBUG] Caso base - 0 paquetes pendientes", camion.costo_total_actual)
         dist_retorno = problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
         costo_final = dist_retorno + camion.costo_total_actual
         if costo_final < solucion.costo_total:
@@ -496,17 +497,14 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
         
         opciones_con_distancia.sort(key=lambda tupla: tupla[0])
         opciones_recortadas = opciones_con_distancia[:K_VECINOS_A_PROBAR]
-        opciones = [paquete for dist, paquete in opciones_recortadas]
         
-        for nodo_destino_entrega in opciones:
+        for dist_viaje_entrega, nodo_destino_entrega in opciones_recortadas:
             nodo_anterior = camion.nodo_actual
-            dist_viaje = problema.grafo_distancias[camion.nodo_actual][nodo_destino_entrega.id_nodo_destino]
-            camion.aplicar_entrega(nodo_destino_entrega, problema, dist_viaje)
+            camion.aplicar_entrega(nodo_destino_entrega, problema, dist_viaje_entrega)
             
-            # NUEVO: Llamada recursiva con profundidad incrementada
             resolver_backtracking(camion, solucion, problema, memo, profundidad + 1, max_profundidad)
             
-            camion.deshacer_entrega(nodo_destino_entrega, nodo_anterior, dist_viaje)
+            camion.deshacer_entrega(nodo_destino_entrega, nodo_anterior, dist_viaje_entrega)
     
     # Recargar (si no está lleno)
     if camion.carga_actual < camion.capacidad_maxima:
@@ -522,15 +520,14 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
         opciones_recarga_con_distancia.sort(key=lambda tupla: tupla[0])
         opciones_recortadas = opciones_recarga_con_distancia[:K_VECINOS_RECARGA_A_PROBAR]
         
-        for dist_viaje, nodo_destino_recarga in opciones_recortadas:
+        for dist_viaje_recarga, nodo_destino_recarga in opciones_recortadas:
             carga_anterior = camion.carga_actual
             nodo_anterior = camion.nodo_actual
-            activacion_de_hub, costo_activacion = camion.aplicar_recarga(nodo_destino_recarga, dist_viaje)
+            activacion_de_hub, costo_activacion = camion.aplicar_recarga(nodo_destino_recarga, dist_viaje_recarga)
             
-            # NUEVO: Llamada recursiva con profundidad incrementada
             resolver_backtracking(camion, solucion, problema, memo, profundidad + 1, max_profundidad)
             
-            camion.deshacer_recarga(activacion_de_hub, nodo_destino_recarga, costo_activacion, carga_anterior, nodo_anterior, dist_viaje)
+            camion.deshacer_recarga(activacion_de_hub, nodo_destino_recarga, costo_activacion, carga_anterior, nodo_anterior, dist_viaje_recarga)
 
 # ===========================================================
 # MAIN
