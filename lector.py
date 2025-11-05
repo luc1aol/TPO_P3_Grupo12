@@ -449,15 +449,7 @@ def estimar_costo_restante(camion: Camion, problema: Problema) -> float:
     costo_estimado += problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
     return costo_estimado  # Sin sumar costos de hubs para ser menos restrictiva
 
-def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema, memo: Dict[Tuple, float], k_vecinos: int, profundidad: int = 0, max_profundidad: int = 1000):
-    """
-    DFS recursivo con memoization y poda por estimación de costo restante.
-    """
-    # NUEVO: Límite de profundidad para evitar stack overflow
-    if profundidad > max_profundidad:
-        return
-    
-    # NUEVO: Estado para memoization (hashable)
+def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema, memo: Dict[Tuple, float], k_vecinos: int):
     estado = (
         frozenset(p.id for p in camion.paquetes_pendientes_actual),
         camion.carga_actual,
@@ -465,14 +457,14 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
         frozenset(camion.hubs_activados_actual)
     )
     
-    # NUEVO: Verificar memo
+    # Verificar memo
     if estado in memo and camion.costo_total_actual >= memo[estado]:
         return
     memo[estado] = camion.costo_total_actual
     
-    # NUEVO: Poda por estimación de costo restante
+    # Poda por estimación de costo restante
     estimacion = estimar_costo_restante(camion, problema)
-    if camion.costo_total_actual + estimacion * 0.5 >= solucion.costo_total:
+    if camion.costo_total_actual + estimacion * 0.8 >= solucion.costo_total:
         return
     
     # --- Casos base ---
@@ -500,7 +492,7 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
             nodo_anterior = camion.nodo_actual
             camion.aplicar_entrega(nodo_destino_entrega, problema, dist_viaje_entrega)
             
-            resolver_backtracking(camion, solucion, problema, memo, k_vecinos, profundidad + 1, max_profundidad)
+            resolver_backtracking(camion, solucion, problema, memo, k_vecinos)
             
             camion.deshacer_entrega(nodo_destino_entrega, nodo_anterior, dist_viaje_entrega)
     
@@ -522,7 +514,7 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
             nodo_anterior = camion.nodo_actual
             activacion_de_hub, costo_activacion = camion.aplicar_recarga(nodo_destino_recarga, dist_viaje_recarga)
             
-            resolver_backtracking(camion, solucion, problema, memo, k_vecinos, profundidad + 1, max_profundidad)
+            resolver_backtracking(camion, solucion, problema, memo, k_vecinos)
             
             camion.deshacer_recarga(activacion_de_hub, nodo_destino_recarga, costo_activacion, carga_anterior, nodo_anterior, dist_viaje_recarga)
 
@@ -564,7 +556,7 @@ def main():
     memo: Dict[Tuple, float] = {}
     
     print("Iniciando backtracking con memoization, estimación y DFS...")
-    resolver_backtracking(camion, mejor_solucion, problema, memo, 3)
+    resolver_backtracking(camion, mejor_solucion, problema, memo, 10)
     
     print(f"[DEBUG] Solución greedy - Costo: {solucion_greedy.costo_total:.2f}")
     if mejor_solucion.costo_total < solucion_greedy.costo_total:
