@@ -1,0 +1,13 @@
+// --- HUBS ACTIVADOS ---
+3
+
+// --- RUTA OPTIMA ---
+0 -> 13 -> 10 -> 15 -> 17 -> 18 -> 17 -> 15 -> 9 -> 3 -> 7 -> 5 -> 0
+
+// --- METRICAS ---
+VALOR DE K: 4
+Cantidad de nodos: 13
+COSTO_TOTAL: 10855.63
+DISTANCIA_RECORRIDA: 10667.63
+COSTO_HUBS: 188.00
+TIEMPO_EJECUCION: 0.001799 segundos

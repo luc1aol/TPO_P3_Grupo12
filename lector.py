@@ -434,7 +434,6 @@ def encontrar_solucion_greedy(problema: Problema):
     
     return solucion
 
-# NUEVO: Función para estimar costo restante (ajustada: menos conservadora, ignora hubs para permitir exploración)
 def estimar_costo_restante(camion: Camion, problema: Problema) -> float:
     """
     Estima el costo mínimo restante: suma distancias mínimas a paquetes pendientes + retorno al depósito.
@@ -449,20 +448,44 @@ def estimar_costo_restante(camion: Camion, problema: Problema) -> float:
     costo_estimado += problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
     return costo_estimado  # Sin sumar costos de hubs para ser menos restrictiva
 
-def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema, memo: Dict[Tuple, float], k_vecinos: int):
-    estado = (
-        frozenset(p.id for p in camion.paquetes_pendientes_actual),
+def crear_estado_actual(camion: Camion) -> Tuple:
+    """
+    Crea una representación inmutable del estado actual del camión.
+    Útil para usar como clave en el diccionario de memoización.
+    """
+    # Convertir a tuplas ordenadas para que sean hashables e inmutables
+    paquetes_ids = tuple(sorted(paquete.id for paquete in camion.paquetes_pendientes_actual))
+    hubs_activados = tuple(sorted(camion.hubs_activados_actual))
+    
+    return (
+        paquetes_ids,
         camion.carga_actual,
         camion.nodo_actual,
-        frozenset(camion.hubs_activados_actual)
+        hubs_activados
     )
+
+def estado_ya_visitado_mejor(camion: Camion, memo: Dict) -> bool:
+    """
+    Verifica si ya visitamos este estado con un costo menor o igual.
+    Retorna True si debemos podar esta rama.
+    """
+    estado = crear_estado_actual(camion)
     
-    # Verificar memo
-    if estado in memo and camion.costo_total_actual >= memo[estado]:
-        return
+    if estado in memo:
+        # Si ya pasamos por aquí con menor o igual costo, podamos
+        return camion.costo_total_actual >= memo[estado]
+    
+    # Guardamos el costo actual para este estado
     memo[estado] = camion.costo_total_actual
+    return False
+
+def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema, memo: Dict[Tuple, float], k_vecinos: int):
     
-    # Poda por estimación de costo restante
+    # Poda 1: Ya visitamos este estado con menor costo
+    if estado_ya_visitado_mejor(camion, memo):
+        return
+    
+    # Poda 2: Por estimación de costo restante
     estimacion = estimar_costo_restante(camion, problema)
     if camion.costo_total_actual + estimacion * 0.8 >= solucion.costo_total:
         return
@@ -472,51 +495,102 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
         dist_retorno = problema.grafo_distancias[camion.nodo_actual][problema.deposito_id]
         print("[DEBUG] Caso base - Costo total:", camion.costo_total_actual + dist_retorno)
         costo_final = dist_retorno + camion.costo_total_actual
+
+        # Si el costo final es mejor que la mejor solucion hasta el momento
         if costo_final < solucion.costo_total:
+            # Actualizar mejor solucion
             solucion.actualizar_solucion(camion, problema, costo_final, dist_retorno)
         return
     
-    # Entregar (si hay carga)
+    # ===== Entregar (si hay carga) =====
     if camion.carga_actual > 0:
         opciones_con_distancia = []
         
+        # Llenar opciones con tuplas(distancia, destino)
         for paquete in camion.paquetes_pendientes_actual:
             if paquete.id_nodo_destino != camion.nodo_actual:
                 dist = problema.grafo_distancias[camion.nodo_actual][paquete.id_nodo_destino]
                 opciones_con_distancia.append((dist, paquete))
-        
+
+        # Ordenar segun distancia y recortar por K Vecinos
         opciones_con_distancia.sort(key=lambda tupla: tupla[0])
         opciones_recortadas = opciones_con_distancia[:k_vecinos]
         
+        # Para cada destino y distancia en las opciones recortadas
         for dist_viaje_entrega, nodo_destino_entrega in opciones_recortadas:
             nodo_anterior = camion.nodo_actual
+
+            # Aplicar
             camion.aplicar_entrega(nodo_destino_entrega, problema, dist_viaje_entrega)
             
+            # Explorar
             resolver_backtracking(camion, solucion, problema, memo, k_vecinos)
             
+            # Deshacer
             camion.deshacer_entrega(nodo_destino_entrega, nodo_anterior, dist_viaje_entrega)
     
-    # Recargar (si no está lleno)
+    # ===== Recargar (si no está lleno) =====
     if camion.carga_actual < camion.capacidad_maxima:
         opciones_recarga_con_distancia = []
         nodos_de_recarga = [problema.deposito_id] + [hub.id_nodo for hub in problema.hubs]
         
+        # Llenar opciones con tuplas(distancia, hub/deposito)
         for id_nodo in nodos_de_recarga:
             if id_nodo != camion.nodo_actual:
                 dist = problema.grafo_distancias[camion.nodo_actual][id_nodo]
                 opciones_recarga_con_distancia.append((dist, id_nodo))
         
+        # Ordenar segun distancia y recortar por K Vecinos
         opciones_recarga_con_distancia.sort(key=lambda tupla: tupla[0])
         opciones_recortadas = opciones_recarga_con_distancia[:k_vecinos]
         
+        # Para cada hub/deposito y distancia en las opciones recortadas
         for dist_viaje_recarga, nodo_destino_recarga in opciones_recortadas:
             carga_anterior = camion.carga_actual
             nodo_anterior = camion.nodo_actual
+
+            # Aplicar
             activacion_de_hub, costo_activacion = camion.aplicar_recarga(nodo_destino_recarga, dist_viaje_recarga)
             
+            #Explorar
             resolver_backtracking(camion, solucion, problema, memo, k_vecinos)
             
+            # Deshacer
             camion.deshacer_recarga(activacion_de_hub, nodo_destino_recarga, costo_activacion, carga_anterior, nodo_anterior, dist_viaje_recarga)
+
+def escribir_solucion_txt(solucion: Solucion, tiempo_ejecucion: float, k_vecinos: int, nombre_archivo: str):
+    """
+    Genera el archivo solucion.txt
+    """
+    try:
+        with open(f"solucion_{nombre_archivo}", 'w') as f:
+            # --- HUBS ACTIVADOS ---
+            f.write("// --- HUBS ACTIVADOS ---\n")
+            if not solucion.hubs_activados:
+                f.write("Ninguno\n")
+            else:
+                # Escribir IDs ordenados
+                for hub_id in sorted(list(solucion.hubs_activados)):
+                    f.write(f"{hub_id}\n")
+            
+            # --- RUTA OPTIMA ---
+            f.write("\n// --- RUTA OPTIMA ---\n")
+            if not solucion.ruta:
+                f.write("No se encontró ruta válida\n")
+            else:
+                f.write(" -> ".join(map(str, solucion.ruta)) + "\n")
+            
+            # --- METRICAS ---
+            f.write("\n// --- METRICAS ---\n")
+            f.write(f"VALOR DE K: {k_vecinos}\n")
+            f.write(f"Cantidad de nodos: {len(solucion.ruta)}\n")
+            f.write(f"COSTO_TOTAL: {solucion.costo_total:.2f}\n")
+            f.write(f"DISTANCIA_RECORRIDA: {solucion.distancia_recorrida:.2f}\n")
+            f.write(f"COSTO_HUBS: {solucion.costo_hubs:.2f}\n")
+            f.write(f"TIEMPO_EJECUCION: {tiempo_ejecucion:.6f} segundos\n")
+            
+    except IOError as e:
+        print(f"Error al escribir el archivo de solución: {e}")
 
 # ===========================================================
 # MAIN
@@ -556,8 +630,10 @@ def main():
     memo: Dict[Tuple, float] = {}
     
     print("Iniciando backtracking con memoization, estimación y DFS...")
-    resolver_backtracking(camion, mejor_solucion, problema, memo, 10)
-    
+
+    k_vecinos = 4
+    resolver_backtracking(camion, mejor_solucion, problema, memo, k_vecinos)
+
     print(f"[DEBUG] Solución greedy - Costo: {solucion_greedy.costo_total:.2f}")
     if mejor_solucion.costo_total < solucion_greedy.costo_total:
         print("[DEBUG] Backtracking encontró una mejor solución")
@@ -569,11 +645,15 @@ def main():
     tiempo = fin - inicio
 
     print(f"\nTiempo de ejecucion: {tiempo:.5f} segundos")
+    print(f"Valor de K: {k_vecinos}")
     print(f"Mejor ruta: {mejor_solucion.ruta}")
+    print(f"Cantidad de nodos: {len(mejor_solucion.ruta)}")
     print(f"Costo total: {mejor_solucion.costo_total:.5f}")
     print(f"Costo activacion de hubs: {mejor_solucion.costo_hubs:.5f}")
     print(f"Distancia total recorrida: {mejor_solucion.distancia_recorrida:.5f}")
     print(f"Hubs activados: {mejor_solucion.hubs_activados}")
+
+    escribir_solucion_txt(mejor_solucion, tiempo, k_vecinos, nombre_archivo)
 
 if __name__ == "__main__":
     main()
