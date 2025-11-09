@@ -570,22 +570,22 @@ def obtener_parametros_optimizados(problema: Problema) -> tuple[int, float]:
     num_nodos = problema.num_nodos
     num_paquetes = problema.num_paquetes
     
-    # Criterio: combinar nodos y paquetes para mejor clasificación
+    # Criterio: combinar nodos y paquetes
     complejidad = num_nodos + num_paquetes * 2
     
     if complejidad <= 100:  # Problema PEQUEÑO (20-50 nodos, pocos paquetes)
         k_vecinos = 10
-        factor_poda = 1  # Poda MUY suave, explora casi todo
+        factor_poda = 0.6 
         categoria = "PEQUEÑO"
         
     elif complejidad <= 250:  # Problema MEDIANO (50-100 nodos)
-        k_vecinos = 8
-        factor_poda = 0.9  # Poda moderada
+        k_vecinos = 10
+        factor_poda = 0.8  
         categoria = "MEDIANO"
         
     else:  # Problema GRANDE (100+ nodos, muchos paquetes)
         k_vecinos = 4
-        factor_poda = 0.8  # Poda agresiva para 500 nodos
+        factor_poda = 0.8  
         categoria = "GRANDE"
     
     print(f"\n[CONFIGURACIÓN] Problema {categoria}")
@@ -594,16 +594,18 @@ def obtener_parametros_optimizados(problema: Problema) -> tuple[int, float]:
     print(f"  - K vecinos: {k_vecinos}")
     print(f"  - Factor de poda: {factor_poda}")
     
-    return k_vecinos, factor_poda
+    return k_vecinos, factor_poda, categoria
 
-def escribir_solucion_txt(solucion: Solucion, tiempo_ejecucion: float, k_vecinos: int, nombre_archivo: str):
+def escribir_solucion_txt(solucion: Solucion, tiempo_ejecucion: float, k_vecinos: int, nombre_archivo: str, categoria: str):
     """
     Genera el archivo solucion.txt
     """
     try:
         with open(f"solucion_{nombre_archivo}", 'w') as f:
+            # --- CATEGORIA ---
+            f.write(f"Categoria: {categoria}\n")
             # --- HUBS ACTIVADOS ---
-            f.write("// --- HUBS ACTIVADOS ---\n")
+            f.write("\n// --- HUBS ACTIVADOS ---\n")
             if not solucion.hubs_activados:
                 f.write("Ninguno\n")
             else:
@@ -659,7 +661,7 @@ def main():
     imprimir_matriz(problema)
 
     # OBTENER PARÁMETROS ADAPTATIVOS
-    k_vecinos, factor_poda = obtener_parametros_optimizados(problema)
+    k_vecinos, factor_poda, categoria = obtener_parametros_optimizados(problema)
 
     camion = Camion(problema)
 
@@ -688,6 +690,7 @@ def main():
     print(f"\n{'='*60}")
     print(f"SOLUCIÓN FINAL")
     print(f"{'='*60}")
+    print(f"Categoria: {categoria}")
     print(f"Tiempo de ejecución: {tiempo:.5f} segundos")
     print(f"K vecinos usado: {k_vecinos}")
     print(f"Factor de poda: {factor_poda}")
@@ -698,7 +701,7 @@ def main():
     print(f"Distancia total recorrida: {mejor_solucion.distancia_recorrida:.5f}")
     print(f"Hubs activados: {mejor_solucion.hubs_activados}")
 
-    escribir_solucion_txt(mejor_solucion, tiempo, k_vecinos, nombre_archivo)
+    escribir_solucion_txt(mejor_solucion, tiempo, k_vecinos, nombre_archivo, categoria)
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,17 @@
+Categoria: MEDIANO
+
+// --- HUBS ACTIVADOS ---
+1
+3
+5
+
+// --- RUTA OPTIMA ---
+0 -> 32 -> 34 -> 35 -> 36 -> 38 -> 43 -> 42 -> 43 -> 1 -> 42 -> 44 -> 16 -> 17 -> 7 -> 6 -> 40 -> 11 -> 3 -> 14 -> 17 -> 9 -> 28 -> 22 -> 28 -> 22 -> 28 -> 5 -> 49 -> 47 -> 49 -> 46 -> 49 -> 9 -> 0
+
+// --- METRICAS ---
+VALOR DE K: 10
+Cantidad de nodos: 35
+COSTO_TOTAL: 29845.64
+DISTANCIA_RECORRIDA: 28968.64
+COSTO_HUBS: 877.00
+TIEMPO_EJECUCION: 2.112117 segundos
