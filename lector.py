@@ -434,6 +434,7 @@ def encontrar_solucion_greedy(problema: Problema):
     
     return solucion
 
+
 def estimar_costo_restante(camion: Camion, problema: Problema) -> float:
     """
     Estima el costo mínimo restante: suma distancias mínimas a paquetes pendientes + retorno al depósito.
@@ -479,15 +480,15 @@ def estado_ya_visitado_mejor(camion: Camion, memo: Dict) -> bool:
     memo[estado] = camion.costo_total_actual
     return False
 
-def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema, memo: Dict[Tuple, float], k_vecinos: int):
+def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema, memo: Dict[Tuple, float], k_vecinos: int, factor_poda: float):
     
     # Poda 1: Ya visitamos este estado con menor costo
     if estado_ya_visitado_mejor(camion, memo):
         return
     
-    # Poda 2: Por estimación de costo restante
+    # Poda 2: Por estimación de costo restante (ahora con factor_poda configurable)
     estimacion = estimar_costo_restante(camion, problema)
-    if camion.costo_total_actual + estimacion * 0.8 >= solucion.costo_total:
+    if camion.costo_total_actual + estimacion * factor_poda >= solucion.costo_total:
         return
     
     # --- Casos base ---
@@ -524,7 +525,7 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
             camion.aplicar_entrega(nodo_destino_entrega, problema, dist_viaje_entrega)
             
             # Explorar
-            resolver_backtracking(camion, solucion, problema, memo, k_vecinos)
+            resolver_backtracking(camion, solucion, problema, memo, k_vecinos, factor_poda)
             
             # Deshacer
             camion.deshacer_entrega(nodo_destino_entrega, nodo_anterior, dist_viaje_entrega)
@@ -553,10 +554,47 @@ def resolver_backtracking(camion: Camion, solucion: Solucion, problema: Problema
             activacion_de_hub, costo_activacion = camion.aplicar_recarga(nodo_destino_recarga, dist_viaje_recarga)
             
             #Explorar
-            resolver_backtracking(camion, solucion, problema, memo, k_vecinos)
+            resolver_backtracking(camion, solucion, problema, memo, k_vecinos, factor_poda)
             
             # Deshacer
             camion.deshacer_recarga(activacion_de_hub, nodo_destino_recarga, costo_activacion, carga_anterior, nodo_anterior, dist_viaje_recarga)
+
+
+def obtener_parametros_optimizados(problema: Problema) -> tuple[int, float]:
+    """
+    Retorna (k_vecinos, factor_poda) según el tamaño del problema.
+    
+    Returns:
+        tupla (k_vecinos, factor_poda)
+    """
+    num_nodos = problema.num_nodos
+    num_paquetes = problema.num_paquetes
+    
+    # Criterio: combinar nodos y paquetes para mejor clasificación
+    complejidad = num_nodos + num_paquetes * 2
+    
+    if complejidad <= 100:  # Problema PEQUEÑO (20-50 nodos, pocos paquetes)
+        k_vecinos = 10
+        factor_poda = 1  # Poda MUY suave, explora casi todo
+        categoria = "PEQUEÑO"
+        
+    elif complejidad <= 250:  # Problema MEDIANO (50-100 nodos)
+        k_vecinos = 8
+        factor_poda = 0.9  # Poda moderada
+        categoria = "MEDIANO"
+        
+    else:  # Problema GRANDE (100+ nodos, muchos paquetes)
+        k_vecinos = 4
+        factor_poda = 0.8  # Poda agresiva para 500 nodos
+        categoria = "GRANDE"
+    
+    print(f"\n[CONFIGURACIÓN] Problema {categoria}")
+    print(f"  - Nodos: {num_nodos}, Paquetes: {num_paquetes}")
+    print(f"  - Complejidad estimada: {complejidad}")
+    print(f"  - K vecinos: {k_vecinos}")
+    print(f"  - Factor de poda: {factor_poda}")
+    
+    return k_vecinos, factor_poda
 
 def escribir_solucion_txt(solucion: Solucion, tiempo_ejecucion: float, k_vecinos: int, nombre_archivo: str):
     """
@@ -620,6 +658,9 @@ def main():
     print("--- MUESTRA DEL GRAFO (MATRIZ DE CAMINOS MINIMOS) ---")
     imprimir_matriz(problema)
 
+    # OBTENER PARÁMETROS ADAPTATIVOS
+    k_vecinos, factor_poda = obtener_parametros_optimizados(problema)
+
     camion = Camion(problema)
 
     mejor_solucion = Solucion()
@@ -629,10 +670,10 @@ def main():
     
     memo: Dict[Tuple, float] = {}
     
-    print("Iniciando backtracking con memoization, estimación y DFS...")
+    print("Iniciando backtracking con parámetros adaptativos...")
 
-    k_vecinos = 4
-    resolver_backtracking(camion, mejor_solucion, problema, memo, k_vecinos)
+    # Pasar factor_poda a la función
+    resolver_backtracking(camion, mejor_solucion, problema, memo, k_vecinos, factor_poda)
 
     print(f"[DEBUG] Solución greedy - Costo: {solucion_greedy.costo_total:.2f}")
     if mejor_solucion.costo_total < solucion_greedy.costo_total:
@@ -644,12 +685,16 @@ def main():
     fin = time.time()
     tiempo = fin - inicio
 
-    print(f"\nTiempo de ejecucion: {tiempo:.5f} segundos")
-    print(f"Valor de K: {k_vecinos}")
+    print(f"\n{'='*60}")
+    print(f"SOLUCIÓN FINAL")
+    print(f"{'='*60}")
+    print(f"Tiempo de ejecución: {tiempo:.5f} segundos")
+    print(f"K vecinos usado: {k_vecinos}")
+    print(f"Factor de poda: {factor_poda}")
     print(f"Mejor ruta: {mejor_solucion.ruta}")
     print(f"Cantidad de nodos: {len(mejor_solucion.ruta)}")
     print(f"Costo total: {mejor_solucion.costo_total:.5f}")
-    print(f"Costo activacion de hubs: {mejor_solucion.costo_hubs:.5f}")
+    print(f"Costo activación de hubs: {mejor_solucion.costo_hubs:.5f}")
     print(f"Distancia total recorrida: {mejor_solucion.distancia_recorrida:.5f}")
     print(f"Hubs activados: {mejor_solucion.hubs_activados}")
 
